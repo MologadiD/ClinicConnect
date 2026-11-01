@@ -1,449 +1,547 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  SafeAreaView,
-  TouchableOpacity,
-  StatusBar,
-  Alert,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
+import { supabase } from '../../services/supabase/client';
+import { EmergencyAlert, EmergencyStatus, Priority } from '../../types';
 
-import { useNavigation } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../../navigation/types';
+type Tab = 'active' | 'history';
 
-type NavigationProp = StackNavigationProp<RootStackParamList>;
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface ActiveAlert {
-  alertId: string;
-  patientId: string;
-  triggeredMinsAgo: number;
-  location: string;
-  coordinates: string;
-  time: string;
-  status: 'Pending' | 'Dispatched';
-  lat: number;
-  lng: number;
-}
-
-interface ResolvedAlert {
-  alertId: string;
-  patientId: string;
-  area: string;
-  date: string;
-}
-
-// ── Mock Data ─────────────────────────────────────────────────────────────────
-const activeAlert: ActiveAlert = {
-  alertId: 'A-0042',
-  patientId: 'P-0042',
-  triggeredMinsAgo: 5,
-  location: 'Langa, Cape Town',
-  coordinates: '-33.93°S, 18.52°E',
-  time: '14:22:05 today',
-  status: 'Pending',
-  lat: -33.9321,
-  lng: 18.5248,
+type AlertRow = EmergencyAlert & {
+  patients?: {
+    first_name?: string;
+    last_name?: string;
+    contact_number?: string | null;
+    email?: string | null;
+  } | null;
 };
 
-const resolvedAlerts: ResolvedAlert[] = [
-  { alertId: 'A-0039', patientId: 'P-0030', area: 'Khayelitsha', date: '7 May' },
-  { alertId: 'A-0037', patientId: 'P-0018', area: 'Mitchells Plain', date: '28 April' },
-];
-
-// ── Component ─────────────────────────────────────────────────────────────────
-const FirstResponderHomeScreen: React.FC = () => {
-  const navigation = useNavigation<NavigationProp>();
-  const [dispatched, setDispatched] = useState(false);
-
-  const handleDispatch = () => {
-    Alert.alert(
-      'Confirm Dispatch',
-      `Dispatch responder to Alert #${activeAlert.alertId} at ${activeAlert.location}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Dispatch',
-          style: 'destructive',
-          onPress: () => setDispatched(true),
-        },
-      ]
-    );
-  };
-
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor={styles.header.backgroundColor} />
-
-      {/* ── Header ── */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>Responder dashboard</Text>
-          <Text style={styles.headerSub}>A. Radebe · On call</Text>
-        </View>
-       <TouchableOpacity
-  style={styles.avatar}
-  onPress={() => navigation.navigate('FirstResponderProfile')}
->
-  <Text style={styles.avatarText}>AR</Text>
-</TouchableOpacity>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-
-        {/* ── Stats Row ── */}
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Active</Text>
-            <Text style={[styles.statValue, { color: '#D32F2F' }]}>
-              {dispatched ? 0 : 1}
-            </Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Dispatched</Text>
-            <Text style={[styles.statValue, { color: '#E65100' }]}>
-              {dispatched ? 3 : 2}
-            </Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Resolved</Text>
-            <Text style={[styles.statValue, { color: '#2E7D32' }]}>14</Text>
-          </View>
-        </View>
-
-        {/* ── Active Alerts ── */}
-        <Text style={styles.sectionTitle}>ACTIVE ALERTS</Text>
-
-        {!dispatched ? (
-          <View style={styles.alertCard}>
-            {/* Alert header row */}
-            <View style={styles.alertTopRow}>
-              <Text style={styles.alertId}>Alert #{activeAlert.alertId}</Text>
-              <View style={styles.pendingBadge}>
-                <Text style={styles.pendingText}>
-                  {activeAlert.status}
-                </Text>
-              </View>
-            </View>
-
-            {/* Alert details */}
-            <Text style={styles.alertTriggered}>
-              Patient {activeAlert.patientId} · triggered {activeAlert.triggeredMinsAgo} min ago
-            </Text>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Location</Text>
-              <Text style={styles.detailValue}>{activeAlert.location}</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Coordinates</Text>
-              <Text style={styles.detailValue}>{activeAlert.coordinates}</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Time</Text>
-              <Text style={styles.detailValue}>{activeAlert.time}</Text>
-            </View>
-
-            {/* Map */}
-            <View style={styles.mapContainer}>
-              <MapView
-                style={styles.map}
-                initialRegion={{
-                  latitude: activeAlert.lat,
-                  longitude: activeAlert.lng,
-                  latitudeDelta: 0.03,
-                  longitudeDelta: 0.03,
-                }}
-              >
-                <Marker
-                  coordinate={{ latitude: activeAlert.lat, longitude: activeAlert.lng }}
-                  title={`Alert #${activeAlert.alertId}`}
-                  description={activeAlert.location}
-                  pinColor="#8B1A1A"
-                />
-              </MapView>
-            </View>
-
-            {/* Dispatch button */}
-            <TouchableOpacity style={styles.dispatchButton} onPress={handleDispatch}>
-              <Text style={styles.dispatchButtonText}>Dispatch responder</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.noAlertCard}>
-            <Text style={styles.noAlertText}>No active alerts at the moment.</Text>
-          </View>
-        )}
-
-        {/* ── Recently Resolved ── */}
-        <Text style={styles.sectionTitle}>RECENTLY RESOLVED</Text>
-
-        {resolvedAlerts.map((item) => (
-          <View key={item.alertId} style={styles.resolvedCard}>
-            <View style={styles.resolvedLeft}>
-              <View style={styles.resolvedDot} />
-              <View>
-                <Text style={styles.resolvedId}>
-                  Alert #{item.alertId} · {item.patientId}
-                </Text>
-                <Text style={styles.resolvedSub}>
-                  {item.area} · {item.date}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.resolvedBadge}>
-              <Text style={styles.resolvedBadgeText}>Resolved</Text>
-            </View>
-          </View>
-        ))}
-
-        <View style={{ height: 40 }} />
-      </ScrollView>
-    </SafeAreaView>
-  );
+const STATUS_COLOR: Record<string, string> = {
+  pending: '#E53935',
+  dispatched: '#FF9800',
+  resolved: '#4CAF50',
+  cancelled: '#9E9E9E',
 };
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+const PRIORITY_COLOR: Record<string, string> = {
+  critical: '#B71C1C',
+  high: '#E53935',
+  medium: '#FB8C00',
+  low: '#43A047',
+};
+
+function formatLocation(loc: EmergencyAlert['location']): string {
+  if (!loc) return 'Location not provided';
+  if (typeof loc === 'string') return loc;
+  const o = loc as Record<string, unknown>;
+  if (typeof o.address === 'string' && o.address) return o.address;
+  if (o.latitude != null && o.longitude != null) {
+    return `${Number(o.latitude).toFixed(5)}, ${Number(o.longitude).toFixed(5)}`;
+  }
+  return 'Location shared';
+}
+
+function mapsUrl(loc: EmergencyAlert['location']): string | null {
+  if (!loc || typeof loc === 'string') return null;
+  const o = loc as Record<string, unknown>;
+  if (o.latitude != null && o.longitude != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${o.latitude},${o.longitude}`;
+  }
+  if (typeof o.address === 'string' && o.address) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(o.address)}`;
+  }
+  return null;
+}
+
+export default function FirstResponderHomeScreen() {
+  const navigation = useNavigation<any>();
+  const { theme } = useTheme();
+  const { staffProfile, logout } = useAuth();
+  const [tab, setTab] = useState<Tab>('active');
+  const [alerts, setAlerts] = useState<AlertRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const name = `${staffProfile?.first_name || 'Responder'} ${staffProfile?.last_name || ''}`.trim();
+  const unit = staffProfile?.response_unit;
+  const ambulance = staffProfile?.ambulance_number;
+
+  const load = useCallback(async () => {
+    try {
+      let query = supabase
+        .from('emergency_alerts')
+        .select(
+          `
+          id,
+          patient_id,
+          responder_id,
+          location,
+          timestamp,
+          emergency_status,
+          priority,
+          description,
+          notes,
+          resolved_at,
+          created_at,
+          updated_at,
+          patients (
+            first_name,
+            last_name,
+            contact_number,
+            email
+          )
+        `
+        )
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (tab === 'active') {
+        query = query.in('emergency_status', ['pending', 'dispatched']);
+      } else {
+        query = query.in('emergency_status', ['resolved', 'cancelled']);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setAlerts((data as AlertRow[]) || []);
+    } catch (e) {
+      console.error('First responder alerts error:', e);
+      Alert.alert('Error', 'Could not load emergency alerts. Pull to retry.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [tab]);
+
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true);
+      load();
+    }, [load])
+  );
+
+  const updateAlert = async (
+    alert: AlertRow,
+    next: EmergencyStatus,
+    extraNotes?: string
+  ) => {
+    setBusyId(alert.id);
+    try {
+      const payload: Record<string, unknown> = {
+        emergency_status: next,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (next === 'dispatched' && staffProfile?.id) {
+        payload.responder_id = staffProfile.id;
+      }
+      if (next === 'resolved') {
+        payload.resolved_at = new Date().toISOString();
+        if (staffProfile?.id && !alert.responder_id) {
+          payload.responder_id = staffProfile.id;
+        }
+      }
+      if (extraNotes) {
+        payload.notes = [alert.notes, extraNotes].filter(Boolean).join('\n');
+      }
+
+      const { error } = await supabase
+        .from('emergency_alerts')
+        .update(payload)
+        .eq('id', alert.id);
+
+      if (error) throw error;
+      await load();
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert('Update failed', e.message || 'Could not update alert status');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmUpdate = (alert: AlertRow, next: EmergencyStatus) => {
+    const labels: Record<EmergencyStatus, string> = {
+      pending: 'pending',
+      dispatched: 'dispatched (I am responding)',
+      resolved: 'resolved',
+      cancelled: 'cancelled',
+    };
+    Alert.alert('Update emergency', `Mark this alert as ${labels[next]}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Confirm',
+        style: next === 'cancelled' ? 'destructive' : 'default',
+        onPress: () => updateAlert(alert, next),
+      },
+    ]);
+  };
+
+  const patientName = (a: AlertRow) => {
+    if (!a.patients) return 'Unknown patient';
+    return `${a.patients.first_name || ''} ${a.patients.last_name || ''}`.trim() || 'Unknown patient';
+  };
+
+  const activeCount = alerts.filter((a) =>
+    a.emergency_status === 'pending' || a.emergency_status === 'dispatched'
+  ).length;
+
+  return (
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]}>
+      <LinearGradient
+        colors={['#B08968', '#FFFFFF', '#FFFFFF']}
+        locations={[0, 0.14, 0.4]}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                load();
+              }}
+              colors={['#6B7C5C']}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.kicker}>First responder</Text>
+              <Text style={[styles.title, { color: theme.colors.text }]} numberOfLines={1}>
+                {name}
+              </Text>
+              {(unit || ambulance) && (
+                <Text style={styles.subMeta}>
+                  {[unit, ambulance].filter(Boolean).join(' · ')}
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity
+              style={styles.avatar}
+              onPress={() => navigation.navigate('FirstResponderProfile')}
+              accessibilityLabel="Open profile"
+            >
+              <Text style={styles.avatarText}>
+                {(staffProfile?.first_name?.[0] || 'R') + (staffProfile?.last_name?.[0] || '')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Stats */}
+          <View style={styles.statsRow}>
+            <View style={[styles.statCard, { backgroundColor: theme.colors.surface }]}>
+              <Ionicons name="warning" size={20} color="#E53935" />
+              <Text style={styles.statNum}>
+                {tab === 'active' ? alerts.length : activeCount}
+              </Text>
+              <Text style={styles.statLabel}>Active queue</Text>
+            </View>
+            <View style={[styles.statCard, { backgroundColor: theme.colors.surface }]}>
+              <Ionicons name="time-outline" size={20} color="#FF9800" />
+              <Text style={styles.statNum}>
+                {alerts.filter((a) => a.emergency_status === 'pending').length}
+              </Text>
+              <Text style={styles.statLabel}>Pending</Text>
+            </View>
+          </View>
+
+          {/* Tabs */}
+          <View style={styles.tabs}>
+            <TouchableOpacity
+              style={[styles.tab, tab === 'active' && styles.tabActive]}
+              onPress={() => setTab('active')}
+            >
+              <Text style={[styles.tabText, tab === 'active' && styles.tabTextActive]}>
+                Active
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, tab === 'history' && styles.tabActive]}
+              onPress={() => setTab('history')}
+            >
+              <Text style={[styles.tabText, tab === 'history' && styles.tabTextActive]}>
+                History
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#6B7C5C" />
+              <Text style={styles.loadingText}>Loading alerts...</Text>
+            </View>
+          ) : alerts.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Ionicons
+                name={tab === 'active' ? 'checkmark-circle-outline' : 'file-tray-outline'}
+                size={48}
+                color={tab === 'active' ? '#4CAF50' : '#BDBDBD'}
+              />
+              <Text style={styles.emptyTitle}>
+                {tab === 'active' ? 'No active emergencies' : 'No history yet'}
+              </Text>
+              <Text style={styles.emptySub}>
+                {tab === 'active'
+                  ? 'New patient alerts will appear here in real time after refresh.'
+                  : 'Resolved and cancelled alerts will show here.'}
+              </Text>
+            </View>
+          ) : (
+            alerts.map((a) => {
+              const status = a.emergency_status || 'pending';
+              const statusColor = STATUS_COLOR[status] || '#999';
+              const priority = (a.priority || 'high') as Priority;
+              const pColor = PRIORITY_COLOR[priority] || '#E53935';
+              const loc = formatLocation(a.location);
+              const map = mapsUrl(a.location);
+              const phone = a.patients?.contact_number;
+              const busy = busyId === a.id;
+
+              return (
+                <View
+                  key={a.id}
+                  style={[styles.card, { backgroundColor: theme.colors.surface }]}
+                >
+                  <View style={styles.cardTop}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={styles.patient}>{patientName(a)}</Text>
+                      <Text style={styles.ref}>
+                        Ref {a.id.slice(0, 8).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.badges}>
+                      <View style={[styles.badge, { backgroundColor: pColor + '22' }]}>
+                        <Text style={[styles.badgeText, { color: pColor }]}>
+                          {priority}
+                        </Text>
+                      </View>
+                      <View style={[styles.badge, { backgroundColor: statusColor + '22' }]}>
+                        <Text style={[styles.badgeText, { color: statusColor }]}>
+                          {status}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.metaRow}>
+                    <Ionicons name="location-outline" size={14} color="#888" />
+                    <Text style={styles.meta} numberOfLines={2}>
+                      {loc}
+                    </Text>
+                  </View>
+                  <View style={styles.metaRow}>
+                    <Ionicons name="time-outline" size={14} color="#888" />
+                    <Text style={styles.meta}>
+                      {a.created_at
+                        ? new Date(a.created_at).toLocaleString('en-ZA')
+                        : a.timestamp
+                          ? new Date(a.timestamp).toLocaleString('en-ZA')
+                          : '—'}
+                    </Text>
+                  </View>
+                  {a.description ? (
+                    <Text style={styles.desc}>{a.description}</Text>
+                  ) : null}
+                  {a.notes ? (
+                    <Text style={styles.notes}>Notes: {a.notes}</Text>
+                  ) : null}
+
+                  {/* Quick links */}
+                  <View style={styles.linkRow}>
+                    {phone ? (
+                      <TouchableOpacity
+                        style={styles.linkBtn}
+                        onPress={() => Linking.openURL(`tel:${phone}`)}
+                      >
+                        <Ionicons name="call" size={16} color="#6B7C5C" />
+                        <Text style={styles.linkText}>Call</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    {map ? (
+                      <TouchableOpacity
+                        style={styles.linkBtn}
+                        onPress={() => Linking.openURL(map)}
+                      >
+                        <Ionicons name="map" size={16} color="#4A90D9" />
+                        <Text style={[styles.linkText, { color: '#4A90D9' }]}>Map</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  {/* Status actions */}
+                  {(status === 'pending' || status === 'dispatched') && (
+                    <View style={styles.actions}>
+                      {status === 'pending' && (
+                        <TouchableOpacity
+                          style={[styles.btn, { backgroundColor: '#FF9800' }, busy && styles.btnDisabled]}
+                          disabled={busy}
+                          onPress={() => confirmUpdate(a, 'dispatched')}
+                        >
+                          {busy ? (
+                            <ActivityIndicator color="#FFF" size="small" />
+                          ) : (
+                            <Text style={styles.btnText}>Dispatch me</Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity
+                        style={[styles.btn, { backgroundColor: '#4CAF50' }, busy && styles.btnDisabled]}
+                        disabled={busy}
+                        onPress={() => confirmUpdate(a, 'resolved')}
+                      >
+                        <Text style={styles.btnText}>Resolve</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.btn, { backgroundColor: '#9E9E9E' }, busy && styles.btnDisabled]}
+                        disabled={busy}
+                        onPress={() => confirmUpdate(a, 'cancelled')}
+                      >
+                        <Text style={styles.btnText}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              );
+            })
+          )}
+
+          <TouchableOpacity
+            style={styles.logout}
+            onPress={() =>
+              Alert.alert('Sign out', 'Are you sure?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Sign out', style: 'destructive', onPress: () => logout() },
+              ])
+            }
+          >
+            <Ionicons name="log-out-outline" size={18} color="#E53935" />
+            <Text style={styles.logoutText}>Sign out</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </LinearGradient>
+    </SafeAreaView>
+  );
+}
+
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#F4F7F6',
-  },
-
-  // Header
-  header: {
-    backgroundColor: '#7B1D1D',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  headerLeft: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  headerSub: {
-    fontSize: 13,
-    color: '#FFCCCC',
-    marginTop: 2,
-  },
-  avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#FFFFFF22',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF55',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 13,
-  },
-
-  // Container
-  container: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-
-  // Stats
-  statsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 24,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#707070',
-    marginBottom: 6,
-  },
-  statValue: {
-    fontSize: 22,
-    fontWeight: 'bold',
-  },
-
-  // Section title
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#2D3A2B',
-    letterSpacing: 0.6,
-    marginBottom: 12,
-  },
-
-  // Active alert card
-  alertCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  alertTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  alertId: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1A1A1A',
-  },
-  pendingBadge: {
-    backgroundColor: '#FFECE8',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: '#FFCCBB',
-  },
-  pendingText: {
-    color: '#C0392B',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  alertTriggered: {
-    fontSize: 12,
-    color: '#888888',
-    marginBottom: 12,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  detailLabel: {
-    fontSize: 13,
-    color: '#888888',
-    flex: 1,
-  },
-  detailValue: {
-    fontSize: 13,
-    color: '#1A1A1A',
-    fontWeight: '500',
-    flex: 1.5,
-    textAlign: 'right',
-  },
-
-  // Map
-  mapContainer: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginTop: 14,
-    marginBottom: 14,
-    height: 160,
-  },
-  map: {
-    flex: 1,
-  },
-
-  // Dispatch button
-  dispatchButton: {
-    backgroundColor: '#7B1D1D',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  dispatchButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 15,
-  },
-
-  // No active alert
-  noAlertCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 20,
-    marginBottom: 24,
-    alignItems: 'center',
-  },
-  noAlertText: {
-    color: '#888888',
-    fontSize: 14,
-  },
-
-  // Resolved alerts
-  resolvedCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
-  },
-  resolvedLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  resolvedDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: '#2E7D32',
-  },
-  resolvedId: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1A1A1A',
-  },
-  resolvedSub: {
-    fontSize: 12,
-    color: '#888888',
-    marginTop: 2,
-  },
-  resolvedBadge: {
-    backgroundColor: '#E8F5E9',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: '#C8E6C9',
-  },
-  resolvedBadgeText: {
-    color: '#2E7D32',
-    fontSize: 11,
-    fontWeight: '700',
-  },
+  safe: { flex: 1 },
+  content: { padding: 16, paddingBottom: 40 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  kicker: { color: '#E53935', fontWeight: '700', fontSize: 12, letterSpacing: 0.3 },
+  title: { fontSize: 24, fontWeight: '700', marginTop: 2 },
+  subMeta: { fontSize: 12, color: '#666', marginTop: 2 },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#E53935',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: { color: '#FFF', fontWeight: '700', fontSize: 16 },
+  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  statCard: {
+    flex: 1,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    alignItems: 'center',
+    gap: 4,
+  },
+  statNum: { fontSize: 22, fontWeight: '700', color: '#333' },
+  statLabel: { fontSize: 11, color: '#777' },
+  tabs: {
+    flexDirection: 'row',
+    backgroundColor: '#F0F0F0',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 14,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  tabActive: { backgroundColor: '#FFF' },
+  tabText: { fontWeight: '600', color: '#888', fontSize: 14 },
+  tabTextActive: { color: '#333' },
+  center: { alignItems: 'center', paddingVertical: 40 },
+  loadingText: { marginTop: 10, color: '#666' },
+  emptyBox: { alignItems: 'center', paddingVertical: 40, paddingHorizontal: 20 },
+  emptyTitle: { marginTop: 12, fontSize: 16, fontWeight: '700', color: '#444' },
+  emptySub: { marginTop: 6, fontSize: 13, color: '#999', textAlign: 'center' },
+  card: {
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    marginBottom: 12,
+  },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start' },
+  patient: { fontWeight: '700', fontSize: 16, color: '#222' },
+  ref: { fontSize: 11, color: '#999', marginTop: 2 },
+  badges: { gap: 6, alignItems: 'flex-end' },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  badgeText: { fontWeight: '700', fontSize: 11, textTransform: 'capitalize' },
+  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 8 },
+  meta: { flex: 1, fontSize: 13, color: '#666', lineHeight: 18 },
+  desc: { marginTop: 10, fontSize: 14, color: '#333', lineHeight: 20 },
+  notes: { marginTop: 6, fontSize: 12, color: '#777', fontStyle: 'italic' },
+  linkRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  linkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  linkText: { color: '#6B7C5C', fontWeight: '600', fontSize: 13 },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  btn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 42,
+  },
+  btnDisabled: { opacity: 0.6 },
+  btnText: { color: '#FFF', fontWeight: '700', fontSize: 12 },
+  logout: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    backgroundColor: '#FFF',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+  },
+  logoutText: { color: '#E53935', fontWeight: '700' },
 });
-
-export default FirstResponderHomeScreen;

@@ -1,5 +1,5 @@
 // src/screens/admin/ServiceManagementScreen.tsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import { supabase } from '../../services/supabase/client';
 import { Button } from '../../components/Button';
 import { Input } from '../../components/Input';
 import { Dropdown } from '../../components/Dropdown';
+import { StatusFilter, StatusFilterValue, matchesStatus } from '../../components/StatusFilter';
 
 interface Service {
   id: string;
@@ -39,6 +40,7 @@ export default function ServiceManagementScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>('active');
   const [modalVisible, setModalVisible] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [clinics, setClinics] = useState<{ id: string; name: string }[]>([]);
@@ -53,8 +55,8 @@ export default function ServiceManagementScreen() {
   const fetchData = async () => {
     try {
       setIsLoading(true);
-      
-      // Fetch clinics
+
+      // Fetch clinics (only active ones can be assigned a service)
       const { data: clinicsData } = await supabase
         .from('clinics')
         .select('id, clinic_name')
@@ -62,7 +64,7 @@ export default function ServiceManagementScreen() {
 
       setClinics(clinicsData?.map(c => ({ id: c.id, name: c.clinic_name })) || []);
 
-      // Fetch services with clinic info
+      // Fetch ALL services; the status filter is applied in the UI
       const { data: servicesData, error } = await supabase
         .from('services')
         .select(`
@@ -94,10 +96,24 @@ export default function ServiceManagementScreen() {
     }, [])
   );
 
-  const filteredServices = services.filter(service =>
-    service.service_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (service.clinic_name && service.clinic_name.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredServices = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return services.filter((service) => {
+      if (!matchesStatus(service.status, statusFilter)) return false;
+      if (!q) return true;
+      return (
+        (service.service_name || '').toLowerCase().includes(q) ||
+        (service.clinic_name || '').toLowerCase().includes(q)
+      );
+    });
+  }, [services, searchQuery, statusFilter]);
+
+  const hasActiveFilters = searchQuery.trim() !== '' || statusFilter !== 'active';
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setStatusFilter('active');
+  };
 
   const clinicOptions = clinics.map(c => ({ label: c.name, value: c.id }));
 
@@ -127,7 +143,7 @@ export default function ServiceManagementScreen() {
                 .from('services')
                 .delete()
                 .eq('id', serviceId);
-              
+
               if (error) throw error;
               await fetchData();
               Alert.alert('Success', 'Service deleted successfully');
@@ -164,7 +180,7 @@ export default function ServiceManagementScreen() {
             estimated_duration: form.estimated_duration,
           })
           .eq('id', editingService.id);
-        
+
         if (error) throw error;
       } else {
         const { error } = await supabase
@@ -176,10 +192,10 @@ export default function ServiceManagementScreen() {
             estimated_duration: form.estimated_duration,
             status: 'active',
           });
-        
+
         if (error) throw error;
       }
-      
+
       setModalVisible(false);
       setEditingService(null);
       setForm({ service_name: '', clinic_id: '', description: '', estimated_duration: '' });
@@ -284,6 +300,8 @@ export default function ServiceManagementScreen() {
           )}
         </View>
 
+        <StatusFilter value={statusFilter} onChange={setStatusFilter} />
+
         {isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6B7C5C" />
@@ -304,8 +322,15 @@ export default function ServiceManagementScreen() {
                 <Ionicons name="medkit-outline" size={64} color="#CCC" />
                 <Text style={styles.emptyTitle}>No services found</Text>
                 <Text style={styles.emptyText}>
-                  {searchQuery ? `No results for "${searchQuery}"` : 'No services registered yet'}
+                  {hasActiveFilters
+                    ? 'No services match the current filters'
+                    : 'No services registered yet'}
                 </Text>
+                {hasActiveFilters && (
+                  <TouchableOpacity style={styles.clearBtn} onPress={clearFilters}>
+                    <Text style={styles.clearBtnText}>Clear filters</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
             <View style={{ height: 20 }} />
@@ -403,7 +428,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFF',
     marginHorizontal: 16,
-    marginVertical: 8,
+    marginTop: 8,
+    marginBottom: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
@@ -454,6 +480,14 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 18, fontWeight: '600', color: '#333', marginTop: 16 },
   emptyText: { fontSize: 14, color: '#999', textAlign: 'center', marginTop: 8 },
+  clearBtn: {
+    marginTop: 16,
+    backgroundColor: '#6B7C5C',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  clearBtnText: { color: '#FFF', fontWeight: '600' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

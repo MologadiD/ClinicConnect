@@ -5,585 +5,356 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  StatusBar,
   ActivityIndicator,
+  TextInput,
+  Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase/client';
-
-const HEADER_BG = '#0F1B35';
-
-interface PatientProfile {
-  id: string;
-  first_name: string;
-  last_name: string;
-  email: string | null;
-  contact_number: string | null;
-  id_number: string | null;
-  gender: string | null;
-  date_of_birth: string | null;
-  address: {
-    streetNumber?: string;
-    streetName?: string;
-    city?: string;
-    postalCode?: string;
-    province?: string;
-  } | null;
-  next_of_kin_name: string | null;
-  next_of_kin_contact: string | null;
-}
-
-interface AppointmentRecord {
-  id: string;
-  clinic_id: string;
-  clinic_name: string;
-  reason_for_visit: string | null;
-  status: string;
-  notes: string | null;
-  created_at: string;
-}
-
-const APPT_STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  booked:     { label: 'Booked',     bg: '#5B7FC4', text: '#fff' },
-  confirmed:  { label: 'Confirmed',  bg: '#1E2D4E', text: '#fff' },
-  completed:  { label: 'Completed',  bg: '#5BBB8A', text: '#fff' },
-  cancelled:  { label: 'Cancelled',  bg: '#8A9BB8', text: '#fff' },
-  no_show:    { label: 'No Show',    bg: '#E05A5A', text: '#fff' },
-};
+import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 
 export default function PatientDetailViewScreen() {
-  const navigation = useNavigation();
-  const route = useRoute<RouteProp<any, any>>();
-  const { role, staffProfile } = useAuth();
+  const navigation = useNavigation<any>();
+  const route = useRoute();
+  const { theme } = useTheme();
+  const { patientId } = (route.params as { patientId: string }) || {};
+  const { role } = useAuth();
+  const [patient, setPatient] = useState<any>(null);
+  const [records, setRecords] = useState<any[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notes, setNotes] = useState('');
+  const [diagnosis, setDiagnosis] = useState('');
+  const [treatment, setTreatment] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const { patientId } = route.params || { patientId: '' };
+  const canWrite = role === 'Doctor' || role === 'Nurse' || role === 'Admin';
 
-  const [patient, setPatient] = useState<PatientProfile | null>(null);
-  const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchData = useCallback(async () => {
+  const load = useCallback(async () => {
     if (!patientId) {
-      setError('No patient ID provided');
-      setIsLoading(false);
+      setLoading(false);
       return;
     }
-
-    if (role !== 'Doctor' && role !== 'Nurse') {
-      setError('Access restricted to medical staff');
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      setIsLoading(true);
-      setError(null);
-
-      const { data: patientData, error: patientError } = await supabase
-        .from('patients')
-        .select('*')
-        .eq('id', patientId)
-        .maybeSingle();
-
-      if (patientError) throw patientError;
-
-      if (!patientData) {
-        setError('Patient not found');
-        setIsLoading(false);
-        return;
-      }
-
-      setPatient(patientData as PatientProfile);
-
-      const { data: apptData, error: apptError } = await supabase
-        .from('appointments')
-        .select('*, clinics!appointments_clinic_id_fkey(clinic_name)')
-        .eq('patient_id', patientId)
-        .eq('clinic_id', staffProfile?.clinic_id || '')
-        .order('created_at', { ascending: false });
-
-      if (apptError) throw apptError;
-
-      const mappedAppts: AppointmentRecord[] = (apptData || []).map((a: any) => ({
-        id: a.id,
-        clinic_id: a.clinic_id,
-        clinic_name: a.clinics?.clinic_name || 'Unknown Clinic',
-        reason_for_visit: a.reason_for_visit,
-        status: a.status,
-        notes: a.notes,
-        created_at: a.created_at,
-      }));
-
-      setAppointments(mappedAppts);
-    } catch (err: any) {
-      console.error('Error fetching patient data:', err);
-      setError(err.message || 'Failed to load patient data');
+      const [{ data: p }, { data: r }, { data: a }] = await Promise.all([
+        supabase.from('patients').select('*').eq('id', patientId).maybeSingle(),
+        supabase
+          .from('medical_records')
+          .select('*')
+          .eq('patient_id', patientId)
+          .order('visit_date', { ascending: false })
+          .limit(20),
+        supabase
+          .from('appointments')
+          .select(
+            `
+            id, status, created_at,
+            services ( service_name ),
+            clinics ( clinic_name ),
+            time_slots ( date, start_time, end_time )
+          `
+          )
+          .eq('patient_id', patientId)
+          .order('created_at', { ascending: false })
+          .limit(8),
+      ]);
+      setPatient(p);
+      setRecords(r || []);
+      setAppointments(a || []);
+    } catch (e) {
+      console.error(e);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
-  }, [patientId, role, staffProfile?.clinic_id]);
+  }, [patientId]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchData();
-    }, [fetchData])
+      setLoading(true);
+      load();
+    }, [load])
   );
 
-  const handleViewRecords = () => {
-    navigation.navigate('MedicalRecord', { patientId });
+  const saveRecord = async () => {
+    if (!canWrite) {
+      Alert.alert('Not allowed', 'Only clinical staff can add records');
+      return;
+    }
+    if (!notes.trim() && !diagnosis.trim()) {
+      Alert.alert('Required', 'Enter diagnosis or clinical notes');
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('medical_records').insert({
+        patient_id: patientId,
+        visit_date: new Date().toISOString(),
+        diagnosis_notes: diagnosis.trim() || notes.trim(),
+        doctor_notes: notes.trim() || null,
+        treatment_plan: treatment.trim() || null,
+      });
+      if (error) throw error;
+      setNotes('');
+      setDiagnosis('');
+      setTreatment('');
+      await load();
+      Alert.alert('Saved', 'Medical record added');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (isLoading) {
+  if (loading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#5B7FC4" />
-          <Text style={styles.loadingText}>Loading patient data...</Text>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.center}>
+          <ActivityIndicator color="#6B7C5C" size="large" />
         </View>
       </SafeAreaView>
     );
   }
 
-  if (error || !patient) {
+  if (!patient) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <LinearGradient
-          colors={['#0F1B35', '#1E2D4E', '#F5F5F5']}
-          locations={[0, 0.15, 0.4]}
-          style={styles.gradient}
-        >
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={24} color="#fff" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Patient Details</Text>
-            <View style={{ width: 40 }} />
-          </View>
-
-          <View style={styles.errorContainer}>
-            <Ionicons name="alert-circle-outline" size={64} color="#CCC" />
-            <Text style={styles.errorTitle}>Patient Not Found</Text>
-            <Text style={styles.errorText}>{error || 'No patient data available'}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={fetchData}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.center}>
+          <Text style={{ color: '#888' }}>Patient not found</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={{ color: '#6B7C5C', fontWeight: '600', marginTop: 8 }}>Go back</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
-  const fullName = `${patient.first_name} ${patient.last_name}`.trim();
-  const initials = `${patient.first_name[0]}${patient.last_name[0]}`.toUpperCase();
-
-  // appointments are already scoped to this patient (fetched with .eq('patient_id', patientId))
-  const queueEntry = appointments.find((a) => a.status !== 'completed' && a.status !== 'cancelled');
-  const queueStatus = queueEntry?.status || null;
-
-  const QUEUE_STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-    'waiting':     { label: 'Waiting',     bg: '#5B7FC4', text: '#fff' },
-    'in-progress': { label: 'In Progress', bg: '#1E2D4E', text: '#fff' },
-    'vitals-done': { label: 'Vitals Done', bg: '#5BBB8A', text: '#fff' },
-    'escalated':   { label: 'Escalated',   bg: '#E05A5A', text: '#fff' },
-    'done':        { label: 'Done',        bg: '#8A9BB8', text: '#fff' },
-  };
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'Not specified';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' });
-  };
-
-  const formatDateTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' });
-  };
-
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F5F5F5" />
-
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]}>
       <LinearGradient
-        colors={['#0F1B35', '#1E2D4E', '#F5F5F5']}
+        colors={['#B08968', '#FFFFFF', '#FFFFFF']}
         locations={[0, 0.15, 0.4]}
-        style={styles.gradient}
+        style={{ flex: 1 }}
       >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={24} color="#fff" />
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={22} color="#333" />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Patient</Text>
+          {role === 'Doctor' ? (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('DoctorMedicalRecord', { patientId })}
+            >
+              <Ionicons name="add-circle-outline" size={24} color="#6B7C5C" />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Patient Details</Text>
-            <View style={{ width: 40 }} />
+          ) : (
+            <View style={{ width: 24 }} />
+          )}
+        </View>
+
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+            <Text style={styles.name}>
+              {patient.first_name} {patient.last_name}
+            </Text>
+            <Meta label="ID number" value={patient.id_number} />
+            <Meta label="Gender" value={patient.gender} />
+            <Meta label="Date of birth" value={patient.date_of_birth} />
+            <Meta label="Phone" value={patient.contact_number} />
+            <Meta label="Email" value={patient.email} />
+            <Meta
+              label="Next of kin"
+              value={
+                patient.next_of_kin_name
+                  ? `${patient.next_of_kin_name}${
+                      patient.next_of_kin_relation ? ` (${patient.next_of_kin_relation})` : ''
+                    }${patient.next_of_kin_contact ? ` · ${patient.next_of_kin_contact}` : ''}`
+                  : null
+              }
+            />
+            <Meta label="Medical aid" value={patient.medical_aid_plan || patient.medical_aid_number} />
+
+            {patient.contact_number ? (
+              <TouchableOpacity
+                style={styles.callBtn}
+                onPress={() => Linking.openURL(`tel:${patient.contact_number}`)}
+              >
+                <Ionicons name="call" size={16} color="#FFF" />
+                <Text style={styles.callText}>Call patient</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
 
-          {/* Patient Header */}
-          <View style={styles.profileHeader}>
-            <View style={styles.avatarContainer}>
-              <Text style={styles.avatarText}>{initials}</Text>
-            </View>
-            <View style={styles.profileInfo}>
-              <Text style={styles.profileName}>{fullName}</Text>
-              <Text style={styles.profileSub}>
-                {patient.gender ? `${patient.gender}` : ''}
-                {patient.gender && patient.date_of_birth ? ' \u2022 ' : ''}
-                {patient.date_of_birth ? `DOB: ${formatDate(patient.date_of_birth)}` : ''}
-              </Text>
-              {queueStatus && (
-                <View style={[styles.queueStatusBadge, { backgroundColor: QUEUE_STATUS_CONFIG[queueStatus]?.bg || '#8A9BB8' }]}>
-                  <Text style={[styles.queueStatusText, { color: QUEUE_STATUS_CONFIG[queueStatus]?.text || '#fff' }]}>
-                    {QUEUE_STATUS_CONFIG[queueStatus]?.label || queueStatus}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
-
-          {/* Contact Details */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>CONTACT DETAILS</Text>
-
-            <View style={styles.detailItem}>
-              <Text style={styles.detailLabel}>Patient ID</Text>
-              <Text style={styles.detailValue}>{patient.id}</Text>
-            </View>
-
-            <View style={styles.detailItem}>
-              <Text style={styles.detailLabel}>Email</Text>
-              <Text style={styles.detailValue}>{patient.email || 'Not specified'}</Text>
-            </View>
-
-            <View style={styles.detailItem}>
-              <Text style={styles.detailLabel}>Contact</Text>
-              <Text style={styles.detailValue}>{patient.contact_number || 'Not specified'}</Text>
-            </View>
-
-            <View style={styles.detailItem}>
-              <Text style={styles.detailLabel}>ID Number</Text>
-              <Text style={styles.detailValue}>{patient.id_number || 'Not specified'}</Text>
-            </View>
-
-            {patient.address && (
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Address</Text>
-                <Text style={styles.detailValue}>
-                  {`${patient.address.streetNumber || ''} ${patient.address.streetName || ''}, ${patient.address.city || ''}`.trim() || 'Not specified'}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Next of Kin */}
-          {patient.next_of_kin_name && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>NEXT OF KIN</Text>
-
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Name</Text>
-                <Text style={styles.detailValue}>{patient.next_of_kin_name}</Text>
-              </View>
-
-              {patient.next_of_kin_contact && (
-                <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Contact</Text>
-                  <Text style={styles.detailValue}>{patient.next_of_kin_contact}</Text>
-                </View>
-              )}
+          {canWrite && (
+            <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+              <Text style={styles.section}>Add clinical note</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Diagnosis"
+                value={diagnosis}
+                onChangeText={setDiagnosis}
+                placeholderTextColor="#999"
+              />
+              <TextInput
+                style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
+                placeholder="Clinical notes"
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                placeholderTextColor="#999"
+              />
+              <TextInput
+                style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]}
+                placeholder="Treatment plan (optional)"
+                value={treatment}
+                onChangeText={setTreatment}
+                multiline
+                placeholderTextColor="#999"
+              />
+              <TouchableOpacity
+                style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+                onPress={saveRecord}
+                disabled={saving}
+              >
+                <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save record'}</Text>
+              </TouchableOpacity>
             </View>
           )}
 
-          {/* Appointment History */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>APPOINTMENT HISTORY</Text>
+          <Text style={[styles.section, { marginHorizontal: 4 }]}>Appointments</Text>
+          {appointments.length === 0 ? (
+            <Text style={styles.empty}>No appointments</Text>
+          ) : (
+            appointments.map((a) => (
+              <View key={a.id} style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+                <Text style={styles.date}>
+                  {a.time_slots?.date ||
+                    (a.created_at ? new Date(a.created_at).toLocaleDateString('en-ZA') : '—')}
+                  {a.time_slots?.start_time ? ` · ${a.time_slots.start_time}` : ''}
+                </Text>
+                <Text style={styles.note}>
+                  {a.services?.service_name || 'Visit'} · {a.clinics?.clinic_name || 'Clinic'} ·{' '}
+                  {a.status}
+                </Text>
+              </View>
+            ))
+          )}
 
-            {appointments.length === 0 ? (
-              <Text style={styles.emptyText}>No appointment history found</Text>
-            ) : (
-              appointments.map((appt, index) => (
-                <View key={appt.id}>
-                  <View style={styles.apptRow}>
-                    <View style={styles.apptInfo}>
-                      <Text style={styles.apptClinic}>{appt.clinic_name}</Text>
-                      <Text style={styles.apptDate}>{formatDateTime(appt.created_at)}</Text>
-                      {appt.reason_for_visit && (
-                        <Text style={styles.apptReason}>{appt.reason_for_visit}</Text>
-                      )}
-                    </View>
-                    <View style={[styles.badge, { backgroundColor: APPT_STATUS_CONFIG[appt.status]?.bg || '#8A9BB8' }]}>
-                      <Text style={[styles.badgeText, { color: APPT_STATUS_CONFIG[appt.status]?.text || '#fff' }]}>
-                        {APPT_STATUS_CONFIG[appt.status]?.label || appt.status}
-                      </Text>
-                    </View>
-                  </View>
-                  {index < appointments.length - 1 && <View style={styles.rowDivider} />}
-                </View>
-              ))
-            )}
-          </View>
-
-          {/* View Medical Records Button */}
-          <TouchableOpacity style={styles.recordsButton} onPress={handleViewRecords}>
-            <Ionicons name="medical-outline" size={20} color="#fff" />
-            <Text style={styles.recordsButtonText}>View Medical Records</Text>
-          </TouchableOpacity>
-
-          <View style={{ height: 20 }} />
+          <Text style={[styles.section, { marginHorizontal: 4 }]}>Medical records</Text>
+          {records.length === 0 ? (
+            <Text style={styles.empty}>No records yet</Text>
+          ) : (
+            records.map((r) => (
+              <View key={r.id} style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+                <Text style={styles.date}>
+                  {r.visit_date
+                    ? new Date(r.visit_date).toLocaleString('en-ZA')
+                    : r.created_at
+                      ? new Date(r.created_at).toLocaleString('en-ZA')
+                      : '—'}
+                </Text>
+                {r.diagnosis_notes ? (
+                  <Text style={styles.note}>
+                    <Text style={styles.bold}>Diagnosis: </Text>
+                    {r.diagnosis_notes}
+                  </Text>
+                ) : null}
+                {r.doctor_notes ? (
+                  <Text style={styles.note}>
+                    <Text style={styles.bold}>Notes: </Text>
+                    {r.doctor_notes}
+                  </Text>
+                ) : null}
+                {r.treatment_plan ? (
+                  <Text style={styles.note}>
+                    <Text style={styles.bold}>Plan: </Text>
+                    {r.treatment_plan}
+                  </Text>
+                ) : null}
+              </View>
+            ))
+          )}
         </ScrollView>
       </LinearGradient>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: HEADER_BG,
-  },
-  gradient: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#666',
-  },
+function Meta({ label, value }: { label: string; value?: string | null }) {
+  if (!value) return null;
+  return (
+    <View style={{ marginTop: 8 }}>
+      <Text style={{ fontSize: 11, color: '#999', fontWeight: '600' }}>{label}</Text>
+      <Text style={{ fontSize: 14, color: '#222', marginTop: 2 }}>{value}</Text>
+    </View>
+  );
+}
 
-  // Header
+const styles = StyleSheet.create({
+  safe: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  backButton: {
-    padding: 4,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-  },
-
-  // Error
-  errorContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 60,
-  },
-  errorTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#888',
-    textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 20,
-  },
-  retryButton: {
-    backgroundColor: '#5B7FC4',
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 10,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
-  // Profile Header
-  profileHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 24,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  avatarContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#1E2D4E',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  avatarText: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  profileInfo: {
-    flex: 1,
-  },
-  profileName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1a1a1a',
-  },
-  profileSub: {
-    fontSize: 13,
-    color: '#888',
-    marginTop: 2,
-  },
-  queueStatusBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginTop: 6,
-  },
-  queueStatusText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-
-  // Sections
-  section: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    letterSpacing: 0.5,
-    marginBottom: 12,
-  },
-
-  // Details
-  detailItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: '#888',
-    flex: 1,
-  },
-  detailValue: {
-    fontSize: 14,
-    color: '#1a1a1a',
-    fontWeight: '500',
-    flex: 1.5,
-    textAlign: 'right',
-  },
-
-  // Appointments
-  apptRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    paddingHorizontal: 16,
     paddingVertical: 10,
   },
-  apptInfo: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  apptClinic: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginBottom: 2,
-  },
-  apptDate: {
-    fontSize: 12,
-    color: '#888',
-    marginBottom: 2,
-  },
-  apptReason: {
-    fontSize: 12,
-    color: '#555',
-  },
-  rowDivider: {
-    height: 1,
-    backgroundColor: '#F0F0F0',
-  },
-  emptyText: {
-    fontSize: 13,
-    color: '#888',
-    textAlign: 'center',
-    paddingVertical: 16,
-  },
-
-  // Badge
-  badge: {
+  backBtn: {
+    width: 40,
+    height: 40,
     borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
     justifyContent: 'center',
+    alignItems: 'center',
   },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
+  headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '700' },
+  content: { padding: 16, paddingBottom: 40 },
+  card: {
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    marginBottom: 12,
   },
-
-  // Records Button
-  recordsButton: {
+  name: { fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 4 },
+  section: { fontSize: 15, fontWeight: '700', color: '#333', marginBottom: 10 },
+  input: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+    fontSize: 14,
+    color: '#222',
+    backgroundColor: '#FAFAFA',
+  },
+  saveBtn: {
+    backgroundColor: '#6B7C5C',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+  },
+  saveText: { color: '#FFF', fontWeight: '700' },
+  callBtn: {
+    marginTop: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1E2D4E',
-    paddingVertical: 14,
-    borderRadius: 12,
     gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: '#6B7C5C',
+    padding: 12,
+    borderRadius: 10,
   },
-  recordsButtonText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  callText: { color: '#FFF', fontWeight: '700' },
+  empty: { textAlign: 'center', color: '#999', marginVertical: 12 },
+  date: { fontSize: 11, color: '#999', marginBottom: 6 },
+  note: { fontSize: 14, color: '#333', marginBottom: 4, lineHeight: 20 },
+  bold: { fontWeight: '700' },
 });

@@ -1,12 +1,21 @@
 import { createClient } from '@supabase/supabase-js';
+import Constants from 'expo-constants';
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseUrl =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ||
+  Constants.expoConfig?.extra?.supabaseUrl ||
+  '';
 
-export const adminActionsClient = createClient(supabaseUrl, supabaseAnonKey, {
+// WARNING: You cannot use the service role key in a mobile app. 
+// This client falls back to the anon key.
+const key =
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+  Constants.expoConfig?.extra?.supabaseAnonKey ||
+  '';
+
+export const adminActionsClient = createClient(supabaseUrl, key, {
   auth: {
-    persistSession: false,
     autoRefreshToken: false,
-    detectSessionInUrl: false,
+    persistSession: false,
   },
 });

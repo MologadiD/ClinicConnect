@@ -1,464 +1,284 @@
-// src/screens/patient/PatientHomeScreen.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  StatusBar,
-  useWindowDimensions,
-  Platform,
   RefreshControl,
   ActivityIndicator,
+  Alert,
+  useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, NavigationProp, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
+import { RootStackParamList } from '../../navigation/types';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabase/client';
 
-// Import types from central types file
-import type { RootStackParamList } from '../../navigation/types';
-import type { Appointment } from '../../types';
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-type NavigationProps = NavigationProp<RootStackParamList>;
+const QUICK_ACTIONS = [
+  { id: 'book', label: 'Book Appointment', icon: 'calendar-outline' as const, color: '#6B7C5C', route: 'SelectClinic' as const },
+  { id: 'nearby', label: 'Nearby Clinics', icon: 'location-outline' as const, color: '#4A90D9', route: 'NearbyClinics' as const },
+  { id: 'records', label: 'Medical Records', icon: 'document-text-outline' as const, color: '#9C27B0', route: 'MedicalRecord' as const },
+  { id: 'emergency', label: 'Emergency', icon: 'warning-outline' as const, color: '#E53935', route: 'Emergency' as const },
+  { id: 'tips', label: 'Health Tips', icon: 'heart-outline' as const, color: '#00838F', route: 'HealthTips' as const },
+  { id: 'alerts', label: 'My Alerts', icon: 'notifications-outline' as const, color: '#FF6F00', route: 'Alerts' as const },
+];
 
-// Local appointment interface (matches the one from types)
-interface AppointmentDisplay {
-  id: string;
-  title: string;
-  date: string;
-  time: string;
-  location: string;
-  status: 'upcoming' | 'booked' | 'completed';
-  clinicName?: string;
+function statusStyle(status: string) {
+  switch (status) {
+    case 'confirmed':
+      return { bg: '#E8F5E9', text: '#2E7D32' };
+    case 'cancelled':
+      return { bg: '#FFEBEE', text: '#C62828' };
+    case 'completed':
+      return { bg: '#E3F2FD', text: '#1565C0' };
+    default:
+      return { bg: '#FFF3E0', text: '#EF6C00' };
+  }
 }
 
 export default function PatientHomeScreen() {
-  const navigation = useNavigation<NavigationProps>();
-  const { user } = useAuth();
+  const navigation = useNavigation<Nav>();
+  const { theme } = useTheme();
+  const { profile, logout } = useAuth();
   const { width } = useWindowDimensions();
-  const [appointments, setAppointments] = useState<AppointmentDisplay[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [alertCount, setAlertCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [upcoming, setUpcoming] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [userName, setUserName] = useState('User');
 
   const isWeb = Platform.OS === 'web';
   const isDesktop = isWeb && width >= 1024;
-  const isTablet = isWeb && width >= 768 && width < 1024;
+  const menuColumns = isDesktop ? 3 : 2;
 
-  // Fetch user profile
-  const fetchUserProfile = async () => {
-    try {
-      if (!user?.id) {
-        setUserName('User');
-        return;
-      }
+  const firstName = profile?.first_name || 'Patient';
+  const lastName = profile?.last_name || '';
+  const initials =
+    `${profile?.first_name?.[0] || 'P'}${profile?.last_name?.[0] || ''}`.toUpperCase();
 
-      const { data, error } = await supabase
-        .from('patients')
-        .select('first_name, last_name')
-        .eq('user_id', user.id)
-        .single();
-
-      if (error) {
-        // If no profile found, use email
-        const emailName = user?.email?.split('@')[0] || 'User';
-        setUserName(emailName);
-        return;
-      }
-
-      if (data) {
-        const firstName = data.first_name || '';
-        const lastName = data.last_name || '';
-        const name = `${firstName} ${lastName}`.trim();
-        setUserName(name || user?.email?.split('@')[0] || 'User');
-      }
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      setUserName(user?.email?.split('@')[0] || 'User');
+  const fetchUpcoming = useCallback(async () => {
+    if (!profile?.id) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
     }
-  };
-
-  const fetchDashboardData = async () => {
     try {
-      setIsLoading(true);
-
-      // If no user, return early
-      if (!user?.id) {
-        setAppointments([]);
-        setUnreadCount(0);
-        setAlertCount(0);
-        setIsLoading(false);
-        return;
-      }
-
-      // Get patient ID
-      const { data: patientData, error: patientError } = await supabase
-        .from('patients')
-        .select('id')
-        .eq('user_id', user.id)
-        .single();
-
-      if (patientError) {
-        console.log('No patient profile found');
-        setAppointments([]);
-        setUnreadCount(0);
-        setAlertCount(0);
-        setIsLoading(false);
-        return;
-      }
-
-      if (patientData) {
-        // Fetch appointments
-        const { data: appointmentsData, error: appointmentsError } = await supabase
-          .from('appointments')
-          .select(`
-            id,
-            reason_for_visit,
-            status,
-            created_at,
-            clinic:clinics (
-              clinic_name,
-              location
-            ),
-            time_slot:time_slots (
-              start_time,
-              date
-            )
-          `)
-          .eq('patient_id', patientData.id)
-          .order('created_at', { ascending: false })
-          .limit(5);
-
-        if (appointmentsError) {
-          console.error('Error fetching appointments:', appointmentsError);
-          setAppointments([]);
-        } else if (appointmentsData) {
-          const formattedAppointments: AppointmentDisplay[] = appointmentsData.map((app: any) => ({
-            id: app.id,
-            title: app.reason_for_visit || 'General Consultation',
-            date: app.time_slot?.date 
-              ? new Date(app.time_slot.date).toLocaleDateString('en-ZA', {
-                  weekday: 'short',
-                  day: 'numeric',
-                  month: 'short',
-                })
-              : 'N/A',
-            time: app.time_slot?.start_time || '12:00',
-            location: app.clinic?.clinic_name || 'Clinic',
-            status: app.status === 'completed'
-              ? 'completed'
-              : app.status === 'booked' || app.status === 'confirmed'
-              ? 'booked'
-              : 'upcoming',
-            clinicName: app.clinic?.clinic_name,
-          }));
-          setAppointments(formattedAppointments);
-        }
-      }
-
-      // Fetch unread notifications count
-      const { count, error: notifError } = await supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('is_read', false);
-
-      if (!notifError) {
-        setUnreadCount(count || 0);
-      }
-
-      // Fetch alert count from emergency_alerts
-      if (patientData?.id) {
-        const { count: emergencyCount, error: alertError } = await supabase
-          .from('emergency_alerts')
-          .select('*', { count: 'exact', head: true })
-          .eq('patient_id', patientData.id)
-          .eq('emergency_status', 'pending');
-
-        if (!alertError) {
-          setAlertCount(emergencyCount || 0);
-        }
-      }
-
-    } catch (error) {
-      console.error('Failed to fetch dashboard data:', error);
+      const { data, error } = await supabase
+        .from('appointments')
+        .select('*, clinics(clinic_name), services(service_name)')
+        .eq('patient_id', profile.id)
+        .in('status', ['booked', 'confirmed'])
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (error) throw error;
+      setUpcoming(data || []);
+    } catch (e) {
+      console.error(e);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
       setRefreshing(false);
     }
-  };
-
-  // Load user profile and data
-  useEffect(() => {
-    const loadData = async () => {
-      await fetchUserProfile();
-      await fetchDashboardData();
-    };
-    loadData();
-  }, [user]);
+  }, [profile?.id]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchDashboardData();
-    }, [])
+      fetchUpcoming();
+    }, [fetchUpcoming])
   );
 
-  const onRefresh = useCallback(async () => {
+  const onRefresh = () => {
     setRefreshing(true);
-    await fetchDashboardData();
-  }, []);
-
-  const handleEmergencyPress = () => navigation.navigate('Emergency');
-  
-  // Updated: Navigate to PatientProfile when avatar is clicked
-  const handleAvatarPress = () => navigation.navigate('PatientProfile', {});
-
-  const handleQuickAction = (action: string) => {
-    switch (action) {
-      case 'nearby':
-        navigation.navigate('NearbyClinics');
-        break;
-      case 'book':
-        navigation.navigate('BookAppointment', { clinicId: '' });
-        break;
-      case 'healthtips':
-        navigation.navigate('HealthTips');
-        break;
-      case 'alerts':
-        navigation.navigate('Alerts');
-        break;
-      case 'profile':
-        navigation.navigate('PatientProfile', {});
-        break;
-      case 'records':
-        navigation.navigate('MedicalRecord', {});
-        break;
-      default:
-        console.warn(`Unknown action: ${action}`);
-        break;
-    }
+    fetchUpcoming();
   };
 
-  const quickActions = [
-    { id: 'nearby', label: 'Nearby Clinics', icon: 'business-outline', color: '#1a1a1a' },
-    { id: 'book', label: 'Make a Booking', icon: 'add-circle-outline', color: '#1a1a1a' },
-    { id: 'healthtips', label: 'Health Tips', icon: 'heart', color: '#c0392b' },
-    { id: 'alerts', label: 'Alerts', icon: 'information-circle-outline', color: '#1a1a1a', badge: alertCount },
-  ];
+  const handleLogout = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await logout();
+          } catch {
+            Alert.alert('Error', 'Failed to sign out');
+          }
+        },
+      },
+    ]);
+  };
 
-  const userInitials = userName
-    .split(' ')
-    .map((n: string) => n[0])
-    .join('')
-    .toUpperCase()
-    .substring(0, 2);
-
-  if (isLoading) {
+  if (loading && !refreshing) {
     return (
-      <LinearGradient
-        colors={['#B08968', '#FFFFFF', '#FFFFFF']}
-        locations={[0, 0.25, 0.5]}
-        style={styles.gradientContainer}
-      >
-        <SafeAreaView style={styles.safeArea}>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#6B7C5C" />
-            <Text style={styles.loadingText}>Loading your dashboard...</Text>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#6B7C5C" />
+          <Text style={styles.loadingText}>Loading home...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <LinearGradient
-      colors={['#B08968', '#FFFFFF', '#FFFFFF']}
-      locations={[0, 0.25, 0.5]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 0, y: 1 }}
-      style={styles.gradientContainer}
-    >
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
+      <LinearGradient
+        colors={['#B08968', '#FFFFFF', '#FFFFFF']}
+        locations={[0, 0.15, 0.5]}
+        style={styles.gradient}
+      >
         <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.scrollContent,
-            isDesktop && styles.scrollContentDesktop,
-          ]}
+          contentContainerStyle={styles.scrollContent}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#6B7C5C']} />
           }
+          showsVerticalScrollIndicator={false}
         >
-          <View
-            style={[
-              styles.contentContainer,
-              { maxWidth: isDesktop ? 1200 : isTablet ? 768 : '100%' },
-            ]}
-          >
-            {/* Header */}
-            <View style={styles.header}>
-              <View>
-                <Text style={[styles.greeting, isDesktop && styles.greetingDesktop]}>
-                  Hello, {userName}
+          {/* Header — same pattern as AdminDashboard */}
+          <View style={styles.header}>
+            <View style={styles.headerRow}>
+              <View style={styles.headerTextContainer}>
+                <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
+                  Welcome, {firstName}
                 </Text>
-                <Text style={[styles.appName, isDesktop && styles.appNameDesktop]}>
-                  ClinicConnect
+                <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
+                  Connecting Patients With Healthcare
                 </Text>
               </View>
-              {/* Updated: Navigate to PatientProfile on avatar press */}
-              <TouchableOpacity style={styles.avatarCircle} onPress={handleAvatarPress}>
-                <Text style={styles.avatarText}>{userInitials}</Text>
-                {unreadCount > 0 && (
-                  <View style={styles.notificationBadge}>
-                    <Text style={styles.notificationBadgeText}>
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {/* Stats Row */}
-            <View style={[styles.statsRow, isDesktop && styles.statsRowDesktop]}>
-              <View style={styles.statCard}>
-                <Text style={styles.statLabel}>Upcoming</Text>
-                <Text style={styles.statValue}>
-                  {appointments.filter(a => a.status === 'booked' || a.status === 'upcoming').length}
-                </Text>
-              </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statLabel}>Unread messages</Text>
-                <Text style={styles.statValue}>{unreadCount}</Text>
+              <View style={styles.headerActions}>
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={() => navigation.navigate('Notifications')}
+                  accessibilityLabel="Notifications"
+                >
+                  <Ionicons name="notifications-outline" size={22} color="#6B7C5C" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.avatarButton}
+                  onPress={() => navigation.navigate('PatientProfile')}
+                  accessibilityLabel="Profile"
+                >
+                  <Text style={styles.avatarText}>{initials}</Text>
+                </TouchableOpacity>
               </View>
             </View>
+          </View>
 
-            {/* Upcoming Appointments */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitleUppercase}>UPCOMING APPOINTMENTS</Text>
-              {appointments.length > 0 ? (
-                appointments
-                  .filter(a => a.status === 'booked' || a.status === 'upcoming')
-                  .slice(0, 3)
-                  .map((appt) => (
-                    <TouchableOpacity
-                      key={appt.id}
-                      style={styles.appointmentCard}
-                      onPress={() =>
-                        navigation.navigate('AppointmentDetail', { appointmentId: appt.id })
-                      }
-                    >
-                      <View style={styles.appointmentHeader}>
-                        <Text style={styles.appointmentTitle}>{appt.title}</Text>
-                        <View style={styles.bookedBadge}>
-                          <Text style={styles.bookedBadgeText}>
-                            {appt.status === 'booked' ? 'Booked' : 'Upcoming'}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={styles.appointmentRow}>
-                        <Ionicons name="calendar-outline" size={14} color="#888" />
-                        <Text style={styles.appointmentDetail}>
-                          {appt.date} · {appt.time}
-                        </Text>
-                      </View>
-                      <View style={styles.appointmentRow}>
-                        <Ionicons name="location-outline" size={14} color="#888" />
-                        <Text style={styles.appointmentDetail}>
-                          {appt.clinicName || appt.location}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))
-              ) : (
-                <View style={styles.emptyAppointments}>
-                  <Ionicons name="calendar-outline" size={40} color="#CCC" />
-                  <Text style={styles.emptyText}>No upcoming appointments</Text>
-                  <TouchableOpacity
-                    style={styles.bookNowButton}
-                    onPress={() => navigation.navigate('BookAppointment', { clinicId: '' })}
-                  >
-                    <Text style={styles.bookNowText}>Book Now</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-
-            {/* Quick Actions */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitleCenter}>Quick Actions</Text>
-              <View
+          {/* Quick Actions — same card grid as Admin */}
+          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Quick Actions</Text>
+          <View style={styles.menuGrid}>
+            {QUICK_ACTIONS.map((item) => (
+              <TouchableOpacity
+                key={item.id}
                 style={[
-                  styles.actionsGrid,
-                  isDesktop && styles.actionsGridDesktop,
-                  isTablet && styles.actionsGridTablet,
+                  styles.menuCard,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    width: `${100 / menuColumns - 2}%` as any,
+                  },
                 ]}
+                onPress={() => navigation.navigate(item.route as any)}
+                activeOpacity={0.85}
               >
-                {quickActions.map((action) => (
+                <View style={[styles.menuIconContainer, { backgroundColor: item.color + '15' }]}>
+                  <Ionicons name={item.icon} size={28} color={item.color} />
+                </View>
+                <Text style={[styles.menuLabel, { color: theme.colors.text }]}>{item.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Upcoming appointments */}
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.text, marginTop: 0, marginBottom: 0 }]}>
+              Upcoming Appointments
+            </Text>
+            <TouchableOpacity onPress={() => navigation.navigate('AppointmentHistory')}>
+              <Text style={styles.linkText}>View all</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={[styles.listContainer, { backgroundColor: theme.colors.surface }]}>
+            {upcoming.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="calendar-outline" size={40} color="#BDBDBD" />
+                <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                  No upcoming appointments
+                </Text>
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={() => navigation.navigate('SelectClinic')}
+                >
+                  <Text style={styles.primaryButtonText}>Book an appointment</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              upcoming.map((apt, index) => {
+                const st = statusStyle(apt.status);
+                return (
                   <TouchableOpacity
-                    key={action.id}
+                    key={apt.id}
                     style={[
-                      styles.actionCard,
-                      isDesktop && styles.actionCardDesktop,
-                      isTablet && styles.actionCardTablet,
+                      styles.activityItem,
+                      index < upcoming.length - 1 && styles.activityBorder,
                     ]}
-                    onPress={() => handleQuickAction(action.id)}
+                    onPress={() =>
+                      navigation.navigate('AppointmentDetail', { appointmentId: apt.id })
+                    }
                   >
-                    {action.badge != null && action.badge > 0 && (
-                      <View style={styles.alertBadge}>
-                        <Text style={styles.alertBadgeText}>{action.badge}</Text>
-                      </View>
-                    )}
-                    <Text style={styles.actionLabel}>{action.label}</Text>
-                    <View style={styles.actionIconWrapper}>
-                      <Ionicons name={action.icon as any} size={36} color="#FFF" />
+                    <View style={[styles.activityIcon, { backgroundColor: '#6B7C5C20' }]}>
+                      <Ionicons name="calendar-outline" size={16} color="#6B7C5C" />
+                    </View>
+                    <View style={styles.activityContent}>
+                      <Text style={[styles.activityDescription, { color: theme.colors.text }]}>
+                        {apt.clinics?.clinic_name || 'Clinic'}
+                      </Text>
+                      <Text style={[styles.activityTimestamp, { color: theme.colors.textSecondary }]}>
+                        {apt.services?.service_name || 'Consultation'} ·{' '}
+                        {apt.appointment_date || apt.created_at?.slice(0, 10)} ·{' '}
+                        {apt.start_time || '—'}
+                      </Text>
+                    </View>
+                    <View style={[styles.badge, { backgroundColor: st.bg }]}>
+                      <Text style={[styles.badgeText, { color: st.text }]}>{apt.status}</Text>
                     </View>
                   </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Emergency Button */}
-            <TouchableOpacity style={styles.emergencyButton} onPress={handleEmergencyPress}>
-              <Ionicons name="warning-outline" size={20} color="#fff" />
-              <Text style={styles.emergencyText}>Emergency</Text>
-            </TouchableOpacity>
-
-            <View style={{ height: isDesktop ? 32 : 16 }} />
+                );
+              })
+            )}
           </View>
+
+          {/* Logout — same control as Admin */}
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={handleLogout}
+            accessibilityLabel="Sign out"
+          >
+            <Ionicons name="log-out-outline" size={22} color="#E53935" />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
         </ScrollView>
-      </SafeAreaView>
-    </LinearGradient>
+      </LinearGradient>
+    </SafeAreaView>
   );
 }
 
-const SAGE = '#6B7C5C';
-
 const styles = StyleSheet.create({
-  gradientContainer: {
-    flex: 1,
-  },
   safeArea: {
     flex: 1,
   },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  scrollContentDesktop: {
-    alignItems: 'center',
-  },
-  contentContainer: {
+  gradient: {
     flex: 1,
-    width: '100%',
-    alignSelf: 'center',
-    paddingHorizontal: 16,
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
   },
   loadingContainer: {
     flex: 1,
@@ -471,254 +291,193 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 14,
-    paddingBottom: 14,
-    backgroundColor: 'transparent',
-  },
-  greeting: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1a1a1a',
-  },
-  greetingDesktop: {
-    fontSize: 28,
-  },
-  appName: {
-    fontSize: 13,
-    color: '#555',
-    marginTop: 2,
-  },
-  appNameDesktop: {
-    fontSize: 16,
-  },
-  avatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#D5CBC4',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  avatarText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#4a3a32',
-  },
-  notificationBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: '#E53935',
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
-  notificationBadgeText: {
-    color: '#FFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 4,
-    marginBottom: 14,
-  },
-  statsRowDesktop: {
-    gap: 20,
     marginBottom: 24,
   },
-  statCard: {
-    flex: 1,
-    backgroundColor: SAGE,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#c8d6bc',
-    fontWeight: '500',
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  statValue: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  section: {
-    backgroundColor: '#fff',
-    marginBottom: 14,
-    borderRadius: 14,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  sectionTitleUppercase: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#333',
-    letterSpacing: 0.6,
-    marginBottom: 12,
-  },
-  sectionTitleCenter: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#222',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  emptyAppointments: {
-    backgroundColor: '#fafafa',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e8e8e8',
-    paddingVertical: 32,
-    alignItems: 'center',
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 13,
-    color: '#aaa',
-  },
-  bookNowButton: {
-    marginTop: 4,
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    backgroundColor: SAGE,
-    borderRadius: 8,
-  },
-  bookNowText: {
-    color: '#FFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  appointmentCard: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 10,
-  },
-  appointmentHeader: {
+  headerRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
   },
-  appointmentTitle: {
+  headerTextContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  headerSubtitle: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#222',
+    marginTop: 4,
   },
-  bookedBadge: {
-    backgroundColor: '#E3F2FD',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  bookedBadgeText: {
-    fontSize: 11,
-    color: '#2196F3',
-    fontWeight: '600',
-  },
-  appointmentRow: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 3,
-  },
-  appointmentDetail: {
-    fontSize: 12,
-    color: '#777',
-  },
-  actionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
   },
-  actionsGridDesktop: {
-    gap: 16,
-  },
-  actionsGridTablet: {
-    gap: 12,
-  },
-  actionCard: {
-    width: '47%',
-    backgroundColor: SAGE,
+  iconButton: {
+    width: 42,
+    height: 42,
     borderRadius: 10,
-    paddingTop: 10,
-    paddingBottom: 14,
-    paddingHorizontal: 12,
-    alignItems: 'flex-start',
-    position: 'relative',
-    minHeight: 120,
-  },
-  actionCardDesktop: {
-    width: '23%',
-  },
-  actionCardTablet: {
-    width: '30%',
-  },
-  actionLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#e8f0e0',
-    marginBottom: 8,
-  },
-  actionIconWrapper: {
-    alignSelf: 'center',
-    marginTop: 4,
-  },
-  alertBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: '#E53935',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 4,
-    zIndex: 1,
   },
-  alertBadgeText: {
-    color: '#fff',
-    fontSize: 10,
+  avatarButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#6B7C5C',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    color: '#FFF',
     fontWeight: '700',
+    fontSize: 14,
   },
-  emergencyButton: {
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  linkText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7C5C',
+  },
+  menuGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  menuCard: {
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  menuIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  menuLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  listContainer: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  activityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    gap: 12,
+  },
+  activityBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  activityIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  activityContent: {
+    flex: 1,
+  },
+  activityDescription: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  activityTimestamp: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 36,
+    paddingHorizontal: 16,
+  },
+  emptyText: {
+    fontSize: 14,
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  primaryButton: {
+    backgroundColor: '#6B7C5C',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  primaryButtonText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E53935',
-    marginHorizontal: 60,
-    paddingVertical: 14,
-    borderRadius: 12,
-    gap: 8,
-    marginBottom: 16,
-    shadowColor: '#E53935',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    alignSelf: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    gap: 6,
+    marginTop: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
   },
-  emergencyText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#fff',
+  logoutText: {
+    color: '#E53935',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });

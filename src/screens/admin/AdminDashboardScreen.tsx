@@ -1,4 +1,3 @@
-// src/screens/admin/AdminDashboardScreen.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -10,12 +9,14 @@ import {
   ActivityIndicator,
   useWindowDimensions,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase/client';
 
 interface DashboardStats {
@@ -37,6 +38,7 @@ interface RecentActivity {
 export default function AdminDashboardScreen() {
   const navigation = useNavigation();
   const { theme } = useTheme();
+  const { logout } = useAuth();
   const { width } = useWindowDimensions();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [activities, setActivities] = useState<RecentActivity[]>([]);
@@ -45,6 +47,27 @@ export default function AdminDashboardScreen() {
 
   const isWeb = Platform.OS === 'web';
   const isDesktop = isWeb && width >= 1024;
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await logout();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to sign out');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -222,12 +245,24 @@ export default function AdminDashboardScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.header}>
-            <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
-              Admin Dashboard
-            </Text>
-            <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
-              Manage your healthcare system
-            </Text>
+            <View style={styles.headerRow}>
+              <View style={styles.headerTextContainer}>
+                <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
+                  Admin Dashboard
+                </Text>
+                <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
+                  Manage your healthcare system
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.logoutButton}
+                onPress={handleLogout}
+                accessibilityLabel="Sign out"
+              >
+                <Ionicons name="log-out-outline" size={22} color="#E53935" />
+                <Text style={styles.logoutText}>Logout</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.statsGrid}>
@@ -273,6 +308,15 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerTextContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
   headerTitle: {
     fontSize: 28,
     fontWeight: '700',
@@ -280,6 +324,27 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 14,
     marginTop: 4,
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  logoutText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#E53935',
   },
   statsGrid: {
     flexDirection: 'row',

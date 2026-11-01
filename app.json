@@ -11,14 +11,22 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.clinicconnect.app"
+      "bundleIdentifier": "com.clinicconnect.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.clinicconnect.app"
+      "package": "com.clinicconnect.app",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -30,7 +38,13 @@
       "expo-asset",
       "expo-font",
       "expo-status-bar",
-      "@react-native-community/datetimepicker"
-    ]
+      "@react-native-community/datetimepicker",
+      "expo-notifications"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ea51a4f8-ef58-4fe7-8f22-fd4d91abea2a"
+      }
+    }
   }
 }

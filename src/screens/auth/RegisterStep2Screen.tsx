@@ -73,7 +73,7 @@ const PatientRegistration = ({ route, navigation }: any) => {
     setErrors({});
     setIsSubmitting(true);
     try {
-      const newProfile = await register(personalInfo.email, personalInfo.password, {
+      const result = await register(personalInfo.email, personalInfo.password, {
         firstName: personalInfo.firstName,
         lastName: personalInfo.lastName,
         contactNumber: personalInfo.contactNumber,
@@ -94,29 +94,27 @@ const PatientRegistration = ({ route, navigation }: any) => {
       });
       
       setIsSubmitting(false);
-      setRegistrationComplete(true);
-      
-      // Navigate after a short delay to show success screen
-      setTimeout(() => {
-        navigation.navigate('PatientHome');
-      }, 1500);
-      
+
+      if (result.needsVerification) {
+        // A 6-digit code was emailed. The account is only finished (and the
+        // patient signed in) once it has been entered on the next screen.
+        navigation.navigate('VerifyEmail', { email: personalInfo.email });
+      } else {
+        // Email confirmation is switched off in Supabase, so we're already signed in.
+        // Do NOT navigate to PatientHome here — it is only registered in the
+        // authenticated stack. AuthContext switches AppNavigator automatically.
+        setRegistrationComplete(true);
+      }
     } catch (err: any) {
       const message = err.message || '';
-      // Check if it's a duplicate email error or user already exists
       if (message.toLowerCase().includes('already') || 
           message.toLowerCase().includes('exists') || 
-          message.toLowerCase().includes('email') ||
           message.toLowerCase().includes('duplicate')) {
-        setRegistrationComplete(true);
-        // Navigate to home after showing success
-        setTimeout(() => {
-          navigation.navigate('PatientHome');
-        }, 1500);
+        setErrors({ general: 'An account with this email already exists. Please sign in instead.' });
       } else {
         setErrors({ general: message || 'Registration failed. Please try again.' });
-        setIsSubmitting(false);
       }
+      setIsSubmitting(false);
     }
   };
 
@@ -142,11 +140,9 @@ const PatientRegistration = ({ route, navigation }: any) => {
               Your account has been created successfully.{'\n'}
               You will be redirected to the home screen.
             </Text>
-            <Button
-              title="Continue"
-              onPress={() => navigation.navigate('PatientHome')}
-              style={styles.nextButton}
-            />
+            <Text style={[styles.successSubtitle, { color: theme.colors.textSecondary, marginTop: 8 }]}>
+              Opening your home screen…
+            </Text>
           </View>
         ) : (
           <>

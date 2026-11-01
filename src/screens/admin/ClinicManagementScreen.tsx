@@ -1,5 +1,5 @@
 // src/screens/admin/ClinicManagementScreen.tsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { clinicApi } from '../../services/api/clinic';
 import { Button } from '../../components/Button';
 import { Input } from '../../components/Input';
+import { StatusFilter, StatusFilterValue, matchesStatus } from '../../components/StatusFilter';
 
 interface Clinic {
   id: string;
@@ -37,6 +38,7 @@ export default function ClinicManagementScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>('active');
   const [modalVisible, setModalVisible] = useState(false);
   const [editingClinic, setEditingClinic] = useState<Clinic | null>(null);
   const [form, setForm] = useState({
@@ -67,10 +69,24 @@ export default function ClinicManagementScreen() {
     }, [])
   );
 
-  const filteredClinics = clinics.filter(clinic =>
-    clinic.clinic_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    clinic.location.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredClinics = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return clinics.filter((clinic) => {
+      if (!matchesStatus(clinic.status, statusFilter)) return false;
+      if (!q) return true;
+      return (
+        (clinic.clinic_name || '').toLowerCase().includes(q) ||
+        (clinic.location || '').toLowerCase().includes(q)
+      );
+    });
+  }, [clinics, searchQuery, statusFilter]);
+
+  const hasActiveFilters = searchQuery.trim() !== '' || statusFilter !== 'active';
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setStatusFilter('active');
+  };
 
   const handleEdit = (clinic: Clinic) => {
     setEditingClinic(clinic);
@@ -244,6 +260,8 @@ export default function ClinicManagementScreen() {
           )}
         </View>
 
+        <StatusFilter value={statusFilter} onChange={setStatusFilter} />
+
         {isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6B7C5C" />
@@ -264,8 +282,15 @@ export default function ClinicManagementScreen() {
                 <Ionicons name="business-outline" size={64} color="#CCC" />
                 <Text style={styles.emptyTitle}>No clinics found</Text>
                 <Text style={styles.emptyText}>
-                  {searchQuery ? `No results for "${searchQuery}"` : 'No clinics registered yet'}
+                  {hasActiveFilters
+                    ? 'No clinics match the current filters'
+                    : 'No clinics registered yet'}
                 </Text>
+                {hasActiveFilters && (
+                  <TouchableOpacity style={styles.clearBtn} onPress={clearFilters}>
+                    <Text style={styles.clearBtnText}>Clear filters</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
             <View style={{ height: 20 }} />
@@ -355,7 +380,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFF',
     marginHorizontal: 16,
-    marginVertical: 8,
+    marginTop: 8,
+    marginBottom: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
@@ -406,6 +432,14 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 18, fontWeight: '600', color: '#333', marginTop: 16 },
   emptyText: { fontSize: 14, color: '#999', textAlign: 'center', marginTop: 8 },
+  clearBtn: {
+    marginTop: 16,
+    backgroundColor: '#6B7C5C',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  clearBtnText: { color: '#FFF', fontWeight: '600' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

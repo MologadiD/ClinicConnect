@@ -37,44 +37,35 @@ const StaffLoginScreen: React.FC = () => {
     setIsLoading(true);
 
     try {
-      console.log(`🔍 Looking for staff with ID: ${staffId}`);
+      const regNumber = staffId.trim();
+      console.log(`🔍 Looking for staff with ID: ${regNumber}`);
 
-      // Find staff member
-      const { data: staffData, error: staffError } = await supabase
-        .from('staff')
-        .select('*')
-        .eq('staff_reg_number', staffId)
-        .maybeSingle();
+      // Step 1: resolve Staff ID -> email via a SECURITY DEFINER RPC.
+      // A direct select on `staff` is blocked by RLS before login (anon role).
+      const { data: staffEmail, error: lookupError } = await supabase.rpc(
+        'get_staff_login_email',
+        { p_reg: regNumber }
+      );
 
-      if (staffError) {
-        console.error('❌ Staff lookup error:', staffError);
+      if (lookupError) {
+        console.error('❌ Staff lookup error:', lookupError);
         setError("Database error. Please try again.");
         setIsLoading(false);
         return;
       }
 
-      if (!staffData) {
-        console.log('❌ No staff found with ID:', staffId);
+      if (!staffEmail) {
+        console.log('❌ No staff found with ID:', regNumber);
         setError("Invalid Staff ID. Please check and try again.");
         setIsLoading(false);
         return;
       }
 
-      console.log('✅ Staff found:', staffData);
+      console.log(`🔑 Attempting login with email: ${staffEmail}`);
 
-      // Check if staff has an email
-      if (!staffData.email) {
-        console.error('❌ Staff has no email:', staffData);
-        setError("Staff account not properly configured.");
-        setIsLoading(false);
-        return;
-      }
-
-      console.log(`🔑 Attempting login with email: ${staffData.email}`);
-
-      // Try to login with staff email
+      // Step 2: sign in with the resolved email
       const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
-        email: staffData.email,
+        email: staffEmail as string,
         password: password,
       });
 
@@ -93,35 +84,27 @@ const StaffLoginScreen: React.FC = () => {
       }
 
       console.log('✅ Login successful:', loginData.user.email);
-      setIsLoading(false);
 
+      // Step 3: now authenticated, so RLS allows reading own staff row
+      const { data: staffData, error: staffError } = await supabase
+        .from('staff')
+        .select('first_name, last_name, role')
+        .eq('user_id', loginData.user.id)
+        .maybeSingle();
+
+      if (staffError) {
+        console.warn('⚠️ Could not load staff profile:', staffError.message);
+      }
+
+      setIsLoading(false);
+      // Do not navigate to role home screens here — they only exist in the
+      // authenticated stack. onAuthStateChange + AppNavigator will switch
+      // automatically once the session is set.
       Alert.alert(
         "Success",
-        `Welcome ${staffData.first_name} ${staffData.last_name}!`,
-        [
-          {
-            text: "Continue",
-            onPress: () => {
-              // Route each role to its own home screen.
-              switch (staffData.role) {
-                case 'Doctor':
-                  navigation.replace('DoctorHome');
-                  break;
-                case 'Nurse':
-                  navigation.replace('NurseHome');
-                  break;
-                case 'Admin':
-                  navigation.replace('AdminDashboard');
-                  break;
-                case 'FirstResponder':
-                  navigation.replace('FirstResponderHome');
-                  break;
-                default:
-                  navigation.replace('AdminDashboard');
-              }
-            }
-          }
-        ]
+        staffData
+          ? `Welcome ${staffData.first_name} ${staffData.last_name}!`
+          : "Welcome!"
       );
 
     } catch (error: any) {
