@@ -3,6 +3,11 @@ import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 
+export type GeoLocation = {
+  latitude: number;
+  longitude: number;
+};
+
 const supabaseUrl =
   process.env.EXPO_PUBLIC_SUPABASE_URL ||
   Constants.expoConfig?.extra?.supabaseUrl ||
