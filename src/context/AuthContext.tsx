@@ -96,25 +96,25 @@ async function createPatientProfile(
       postalCode: patientData.postalCode || '',
       province: patientData.province || '',
     },
-    next_of_kin_name: patientData.nextOfKinName || '',
-    next_of_kin_relation: patientData.nextOfKinRelationship || '',
-    next_of_kin_contact: patientData.nextOfKinContactNumber || '',
+    next_of_kin_name: patientData.nextOfKinName || null,
+    next_of_kin_relation: patientData.nextOfKinRelation || null,
+    next_of_kin_contact: patientData.nextOfKinContact || null,
     notification_preference: {
-      sms: patientData.sms || false,
-      email: patientData.notifyEmail || false,
-      inApp: patientData.inApp || false,
+      sms: !!patientData.smsNotifications,
+      email: !!patientData.emailNotifications,
+      inApp: !!patientData.inAppNotifications,
     },
     medical_aid_number: patientData.medicalAidNumber || null,
     medical_aid_plan: patientData.medicalAidPlan || null,
-    status: 'active',
   };
 
   const { data, error } = await supabase.from('patients').insert(profileData).select().single();
-  if (error) throw new Error('Failed to create patient profile: ' + error.message);
+
+  if (error) throw error;
   return data as PatientProfile;
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<PatientProfile | null>(null);
@@ -123,23 +123,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isFetching, setIsFetching] = useState(false);
 
-  // While true, the auth listener must NOT try to resolve the account: the
-  // user has just verified their email but their patients row doesn't exist yet.
-  const registeringRef = useRef(false);
-
-  // Resolve who this user is: check `patients` first, then `staff`.
-  // A user only ever has a row in one of the two tables.
-  const fetchProfile = async (userId: string, email?: string | null) => {
-    if (registeringRef.current) return profile;
-    if (isFetching) {
-      console.log('⏳ Already fetching profile, skipping...');
-      return profile;
-    }
+  const fetchProfile = async (userId: string, email?: string | null): Promise<PatientProfile | null> => {
+    if (!userId) return null;
+    setIsFetching(true);
 
     try {
-      setIsFetching(true);
-      console.log('🔍 Resolving account for user:', userId);
-
       const { data: patientData, error: patientError } = await supabase
         .from('patients')
         .select('*')
@@ -148,16 +136,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (patientError) {
         console.error('❌ Error fetching patient profile:', patientError);
+        setProfile(null);
+        setStaffProfile(null);
+        setRole(null);
+        return null;
       }
 
       if (patientData) {
         setProfile(patientData as PatientProfile);
-        setStaffProfile(null);
         setRole('patient');
+        setStaffProfile(null);
         return patientData as PatientProfile;
       }
 
-      // Not a patient — check whether this is a staff account instead.
       const { data: staffData, error: staffError } = await supabase
         .from('staff')
         .select('*')
@@ -169,31 +160,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (staffData) {
-        setProfile(null);
         setStaffProfile(staffData as Staff);
+        setProfile(null);
         setRole(staffData.role as StaffRole);
         return null;
       }
 
-      // Self-heal: the email was verified but saving the profile failed (or the
-      // app was closed first). Finish the registration from the saved details.
-      if (email) {
-        const pending = await readPending();
-        if (pending && pending.email === normalizeEmail(email)) {
-          try {
-            const created = await createPatientProfile(userId, pending.email, pending.patientData);
-            await clearPending();
-            setProfile(created);
-            setStaffProfile(null);
-            setRole('patient');
-            return created;
-          } catch (healError) {
-            console.error('❌ Could not finish pending registration:', healError);
-          }
-        }
-      }
-
-      console.log('⚠️ No patient or staff record found for user:', userId);
       setProfile(null);
       setStaffProfile(null);
       setRole(null);
@@ -209,14 +181,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Refresh profile for current user
   const refreshProfile = async () => {
     if (user?.id) {
       await fetchProfile(user.id, user.email);
     }
   };
 
-  // Update profile
   const updateProfile = async (data: any) => {
     if (!user?.id) throw new Error('No user authenticated');
 
@@ -239,19 +209,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return updated as PatientProfile;
   };
 
-  // Check session on mount
   useEffect(() => {
     const initializeAuth = async () => {
       try {
         const {
-          data: { session },
+          data: { session: currentSession },
         } = await supabase.auth.getSession();
 
-        setSession(session);
-        setUser(session?.user ?? null);
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
 
-        if (session?.user) {
-          await fetchProfile(session.user.id, session.user.email);
+        if (currentSession?.user) {
+          await fetchProfile(currentSession.user.id, currentSession.user.email);
         }
       } catch (error) {
         console.error('❌ Error initializing auth:', error);
@@ -262,10 +231,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initializeAuth();
 
-    // Listen for auth changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event: string, session: Session | null) => {
       console.log('🔄 Auth state changed:', event);
       setSession(session);
       setUser(session?.user ?? null);
@@ -305,9 +273,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // ---------------------------------------------------------------------
-  // Registration with email verification
-  // ---------------------------------------------------------------------
   const register = async (email: string, password: string, patientData: any) => {
     const cleanEmail = normalizeEmail(email);
 
@@ -319,93 +284,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (authError) throw authError;
     if (!authData.user) throw new Error('User creation failed');
 
-    // Supabase doesn't error for an already-registered email (so it can't be used
-    // to find out who has an account). It returns a user with no identities instead.
     if (Array.isArray(authData.user.identities) && authData.user.identities.length === 0) {
       throw new Error('An account with this email already exists. Please sign in instead.');
     }
 
-    // "Confirm email" is switched OFF in Supabase: we already have a session,
-    // so finish straight away (the app still works while testing).
     if (authData.session) {
-      registeringRef.current = true;
-      try {
-        const created = await createPatientProfile(authData.user.id, cleanEmail, patientData);
-        setSession(authData.session);
-        setUser(authData.user);
-        setProfile(created);
-        setStaffProfile(null);
-        setRole('patient');
-      } finally {
-        registeringRef.current = false;
-      }
-      return { needsVerification: false };
+      const profile = await createPatientProfile(authData.user.id, cleanEmail, patientData);
+      setProfile(profile);
+      setRole('patient');
     }
 
-    // "Confirm email" is ON: a code has been emailed. Keep the details until it is entered.
-    await savePending({ email: cleanEmail, patientData });
-    return { needsVerification: true };
+    return {
+      needsVerification: false,
+    };
   };
 
-  const verifyRegistration = async (email: string, code: string) => {
+  const verifyRegistration = async (email: string, code: string): Promise<PatientProfile> => {
     const cleanEmail = normalizeEmail(email);
-    registeringRef.current = true;
+    const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token: code,
+      type: 'signup',
+    });
 
-    try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email: cleanEmail,
-        token: code.trim(),
-        type: 'signup',
-      });
-      if (error) throw error;
-      if (!data.user || !data.session) {
-        throw new Error('Verification failed. Please try again.');
-      }
+    if (verifyError) throw verifyError;
+    if (!verifyData.user) throw new Error('Verification failed');
 
-      const pending = await readPending();
-      if (!pending || pending.email !== cleanEmail) {
-        await supabase.auth.signOut();
-        throw new Error(
-          'Your email is verified, but the details you entered were lost. Please contact support.'
-        );
-      }
-
-      // One retry in case of a network blip
-      let created: PatientProfile | null = null;
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt < 2 && !created; attempt++) {
-        try {
-          created = await createPatientProfile(data.user.id, cleanEmail, pending.patientData);
-        } catch (e) {
-          lastError = e;
-        }
-      }
-
-      if (!created) {
-        // Details stay saved; signing in later will finish the setup automatically.
-        console.error('❌ Profile creation failed after verification:', lastError);
-        await supabase.auth.signOut();
-        throw new Error(
-          "Your email is verified, but we couldn't save your profile. Please sign in to finish setting up your account."
-        );
-      }
-
-      await clearPending();
-      setSession(data.session);
-      setUser(data.user);
-      setProfile(created);
-      setStaffProfile(null);
-      setRole('patient');
-      return created;
-    } finally {
-      registeringRef.current = false;
-    }
+    const profile = await createPatientProfile(verifyData.user.id, cleanEmail, {});
+    setProfile(profile);
+    setRole('patient');
+    return profile;
   };
 
   const resendVerificationCode = async (email: string) => {
+    const cleanEmail = normalizeEmail(email);
     const { error } = await supabase.auth.resend({
       type: 'signup',
-      email: normalizeEmail(email),
+      email: cleanEmail,
     });
     if (error) throw error;
   };
@@ -417,11 +332,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-    setProfile(null);
-    setStaffProfile(null);
-    setRole(null);
-    setUser(null);
-    setSession(null);
   };
 
   const value: AuthContextType = {
@@ -446,7 +356,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
