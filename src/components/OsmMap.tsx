@@ -66,12 +66,14 @@ function buildHtml(lat: number, lng: number): string {
         title.className = 'popup-title';
         title.textContent = m.title;
         box.appendChild(title);
+
         if (m.subtitle) {
           var sub = document.createElement('div');
           sub.className = 'popup-sub';
           sub.textContent = m.subtitle;
           box.appendChild(sub);
         }
+
         var btn = document.createElement('button');
         btn.className = 'popup-btn';
         btn.textContent = 'View clinic';
@@ -92,12 +94,10 @@ function buildHtml(lat: number, lng: number): string {
 }
 
 export default function OsmMap({ center, markers, onMarkerPress, height = 180 }: OsmMapProps) {
-  const webRef = useRef<WebView>(null);
+  const webRef = useRef<any>(null);
   const [ready, setReady] = useState(false);
 
-  // Built once: later marker changes are pushed in with injectJavaScript.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const html = useMemo(() => buildHtml(center.latitude, center.longitude), []);
+  const html = useMemo(() => buildHtml(center.latitude, center.longitude), [center.latitude, center.longitude]);
 
   useEffect(() => {
     if (!ready) return;
@@ -106,8 +106,8 @@ export default function OsmMap({ center, markers, onMarkerPress, height = 180 }:
     );
   }, [ready, markers]);
 
-  const handleMessage = (e: WebViewMessageEvent) => {
-    onMarkerPress?.(e.nativeEvent.data);
+  const handleMessage = (event: WebViewMessageEvent) => {
+    onMarkerPress?.(event.nativeEvent.data);
   };
 
   return (
@@ -123,7 +123,7 @@ export default function OsmMap({ center, markers, onMarkerPress, height = 180 }:
         overScrollMode="never"
         onLoadEnd={() => setReady(true)}
         onMessage={handleMessage}
-        onShouldStartLoadWithRequest={(req) => {
+        onShouldStartLoadWithRequest={(req: any) => {
           if (
             req.url.startsWith(BASE_URL) ||
             req.url.startsWith('about:') ||
@@ -131,7 +131,7 @@ export default function OsmMap({ center, markers, onMarkerPress, height = 180 }:
           ) {
             return true;
           }
-          // e.g. the attribution link: open in the phone's browser, keep the map in place
+
           Linking.openURL(req.url).catch(() => {});
           return false;
         }}

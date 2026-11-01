@@ -1,25 +1,27 @@
-// src/screens/patient/AlertsScreen.tsx
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  RefreshControl,
   ActivityIndicator,
   Linking,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase/client';
-import { EmergencyAlert, Priority, EmergencyStatus } from '../../types';
+import { EmergencyAlert, EmergencyStatus, Priority } from '../../types';
 
-const STATUS_META: Record<EmergencyStatus, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+const STATUS_META: Record<
+  EmergencyStatus,
+  { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }
+> = {
   pending: { label: 'Pending', color: '#E53935', icon: 'alert-circle' },
   dispatched: { label: 'Responder Dispatched', color: '#FF9800', icon: 'car' },
   resolved: { label: 'Resolved', color: '#4CAF50', icon: 'checkmark-circle' },
@@ -33,7 +35,8 @@ const PRIORITY_META: Record<Priority, { label: string; color: string }> = {
   critical: { label: 'Critical', color: '#E53935' },
 };
 
-function formatDateTime(iso: string) {
+function formatDateTime(iso?: string) {
+  if (!iso) return 'Unknown time';
   const date = new Date(iso);
   return date.toLocaleString('en-ZA', {
     day: '2-digit',
@@ -42,6 +45,15 @@ function formatDateTime(iso: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function getLocationAddress(location: EmergencyAlert['location']): string {
+  if (!location) return '';
+  if (typeof location === 'string') return location;
+  const loc = location as Record<string, unknown>;
+  if (typeof loc.address === 'string' && loc.address.trim()) return loc.address;
+  if (typeof loc.label === 'string' && loc.label.trim()) return loc.label;
+  return '';
 }
 
 export default function AlertsScreen() {
@@ -105,11 +117,15 @@ export default function AlertsScreen() {
     const statusMeta = STATUS_META[alert.emergency_status];
     const priorityMeta = PRIORITY_META[alert.priority];
     const isExpanded = expandedId === alert.id;
+    const locationAddress = getLocationAddress(alert.location);
 
     return (
       <TouchableOpacity
         key={alert.id}
-        style={[styles.alertCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}
+        style={[
+          styles.alertCard,
+          { borderColor: theme.colors.border, backgroundColor: theme.colors.surface },
+        ]}
         onPress={() => toggleExpanded(alert.id)}
         activeOpacity={0.8}
       >
@@ -130,40 +146,49 @@ export default function AlertsScreen() {
           </Text>
         </View>
 
-        {alert.location?.address && (
+        {locationAddress ? (
           <View style={styles.detailRow}>
             <Ionicons name="location-outline" size={16} color={theme.colors.textSecondary} />
-            <Text style={[styles.detailText, { color: theme.colors.textSecondary }]} numberOfLines={isExpanded ? undefined : 1}>
-              {alert.location.address}
+            <Text
+              style={[styles.detailText, { color: theme.colors.textSecondary }]}
+              numberOfLines={isExpanded ? undefined : 1}
+            >
+              {locationAddress}
             </Text>
           </View>
-        )}
+        ) : null}
 
-        {alert.description && (
+        {alert.description ? (
           <Text
             style={[styles.description, { color: theme.colors.text }]}
             numberOfLines={isExpanded ? undefined : 2}
           >
             {alert.description}
           </Text>
-        )}
+        ) : null}
 
         {isExpanded && (
           <View style={[styles.expandedSection, { borderTopColor: theme.colors.border }]}>
-            {alert.notes && (
+            {alert.notes ? (
               <View style={styles.expandedRow}>
-                <Text style={[styles.expandedLabel, { color: theme.colors.textSecondary }]}>Responder notes</Text>
+                <Text style={[styles.expandedLabel, { color: theme.colors.textSecondary }]}>
+                  Responder notes
+                </Text>
                 <Text style={[styles.expandedValue, { color: theme.colors.text }]}>{alert.notes}</Text>
               </View>
-            )}
-            {alert.resolved_at && (
+            ) : null}
+
+            {alert.resolved_at ? (
               <View style={styles.expandedRow}>
-                <Text style={[styles.expandedLabel, { color: theme.colors.textSecondary }]}>Resolved at</Text>
+                <Text style={[styles.expandedLabel, { color: theme.colors.textSecondary }]}>
+                  Resolved at
+                </Text>
                 <Text style={[styles.expandedValue, { color: theme.colors.text }]}>
                   {formatDateTime(alert.resolved_at)}
                 </Text>
               </View>
-            )}
+            ) : null}
+
             {alert.emergency_status === 'pending' && (
               <TouchableOpacity style={styles.callButton} onPress={callEmergencyServices}>
                 <Ionicons name="call" size={16} color="#FFF" />

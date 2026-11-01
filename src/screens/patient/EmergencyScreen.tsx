@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import {
+  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
-  View,
-  ScrollView,
-  SafeAreaView,
-  TouchableOpacity,
   TextInput,
-  StatusBar,
+  TouchableOpacity,
+  View,
+  SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -35,12 +35,10 @@ const EmergencyScreen: React.FC = () => {
   const savedAddress = '14 Main Rd, Langa, Cape Town';
 
   const handleSOS = () => {
-    // TODO: hook up real alert dispatch (Supabase insert into emergency_alerts)
     navigation.navigate('EmergencySuccess');
   };
 
   const handleSendAlert = () => {
-    // TODO: hook up real alert dispatch with selectedType + details
     navigation.navigate('EmergencySuccess');
   };
 
@@ -48,11 +46,7 @@ const EmergencyScreen: React.FC = () => {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
 
-      {/* ── Header ── */}
-      <LinearGradient
-        colors={['#B08968', '#F4F7F6']}
-        style={styles.header}
-      >
+      <LinearGradient colors={['#B08968', '#F4F7F6']} style={styles.header}>
         <View style={styles.headerTopRow}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -66,8 +60,6 @@ const EmergencyScreen: React.FC = () => {
       </LinearGradient>
 
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-
-        {/* ── Warning Banner ── */}
         <View style={styles.warningBanner}>
           <Ionicons name="warning" size={18} color="#C0392B" style={{ marginRight: 8 }} />
           <View style={{ flex: 1 }}>
@@ -78,7 +70,6 @@ const EmergencyScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* ── Address selector ── */}
         <TouchableOpacity
           style={[styles.addressRow, !useCurrentLocation && styles.addressRowSelected]}
           onPress={() => setUseCurrentLocation(false)}
@@ -97,7 +88,6 @@ const EmergencyScreen: React.FC = () => {
           <Text style={styles.addressText}>Share your current location</Text>
         </TouchableOpacity>
 
-        {/* ── SOS Button ── */}
         <View style={styles.sosWrapper}>
           <TouchableOpacity style={styles.sosButton} onPress={handleSOS} activeOpacity={0.85}>
             <Ionicons name="alert-circle-outline" size={20} color="#FFFFFF" />
@@ -106,7 +96,6 @@ const EmergencyScreen: React.FC = () => {
           <Text style={styles.sosCaption}>Tap to alert emergency services instantly</Text>
         </View>
 
-        {/* ── Emergency type ── */}
         <Text style={styles.sectionLabel}>Emergency type</Text>
         <View style={styles.typeGrid}>
           {EMERGENCY_TYPES.map((type) => {
@@ -125,7 +114,6 @@ const EmergencyScreen: React.FC = () => {
           })}
         </View>
 
-        {/* ── Additional details ── */}
         <Text style={styles.sectionLabel}>Additional details (optional)</Text>
         <TextInput
           style={styles.detailsInput}
@@ -137,7 +125,6 @@ const EmergencyScreen: React.FC = () => {
           onChangeText={setDetails}
         />
 
-        {/* ── Send / Cancel ── */}
         <TouchableOpacity style={styles.sendButton} onPress={handleSendAlert} activeOpacity={0.85}>
           <Text style={styles.sendButtonText}>Send emergency alert</Text>
         </TouchableOpacity>

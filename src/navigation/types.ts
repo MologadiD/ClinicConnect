@@ -1,6 +1,4 @@
-// src/navigation/types.ts
 export type RootStackParamList = {
-  // Auth
   Login: undefined;
   StaffLogin: undefined;
   ForgotPassword: undefined;
@@ -8,7 +6,6 @@ export type RootStackParamList = {
   RegisterStep2: { [key: string]: any };
   VerifyEmail: { email: string };
 
-  // Patient Screens
   PatientHome: { [key: string]: any } | undefined;
   PatientProfile: { patientId?: string } | undefined;
   MedicalRecord: { patientId?: string } | undefined;
@@ -43,12 +40,12 @@ export type RootStackParamList = {
   Notifications: undefined;
   NotificationPreferences: undefined;
   Emergency: undefined;
+  EmergencySuccess: undefined;
   HealthTips: undefined;
   Alerts: undefined;
   ClinicDetails: { clinicId: string };
   ServiceDetails: { serviceId: string };
 
-  // Admin/Staff Screens
   AdminDashboard: undefined;
   StaffList: undefined;
   StaffDetails: { staffId: string };

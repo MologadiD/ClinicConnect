@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
   ActivityIndicator,
+  FlatList,
   RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,30 +20,34 @@ const FALLBACK_TIPS: HealthTip[] = [
     title: 'Stay hydrated',
     content: 'Drink at least 6–8 glasses of clean water every day, especially in warm weather.',
     category: 'General',
-    featured: true,
+    is_featured: true,
   },
   {
     id: '2',
     title: 'Wash your hands',
-    content: 'Wash hands with soap for 20 seconds before eating and after using the toilet to prevent infections.',
+    content:
+      'Wash hands with soap for 20 seconds before eating and after using the toilet to prevent infections.',
     category: 'Hygiene',
   },
   {
     id: '3',
     title: 'Know your BP',
-    content: 'Have your blood pressure checked regularly. High BP often has no symptoms but can lead to serious illness.',
+    content:
+      'Have your blood pressure checked regularly. High BP often has no symptoms but can lead to serious illness.',
     category: 'Chronic care',
   },
   {
     id: '4',
     title: 'Take medication on time',
-    content: 'If you are on chronic medication (e.g. for HIV, diabetes, hypertension), take it at the same time every day.',
+    content:
+      'If you are on chronic medication (e.g. for HIV, diabetes, hypertension), take it at the same time every day.',
     category: 'Medication',
   },
   {
     id: '5',
     title: 'When to seek urgent care',
-    content: 'Chest pain, difficulty breathing, severe bleeding, or sudden weakness need immediate medical attention — use the Emergency button.',
+    content:
+      'Chest pain, difficulty breathing, severe bleeding, or sudden weakness need immediate medical attention — use the Emergency button.',
     category: 'Emergency',
   },
 ];
@@ -60,8 +64,9 @@ export default function HealthTipsScreen() {
       const { data, error } = await supabase
         .from('health_tips')
         .select('*')
-        .order('featured', { ascending: false })
+        .order('is_featured', { ascending: false })
         .order('created_at', { ascending: false });
+
       if (!error && data && data.length > 0) {
         setTips(data as HealthTip[]);
       }
@@ -94,21 +99,26 @@ export default function HealthTipsScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} colors={['#2E7D32']} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                load();
+              }}
+              colors={['#2E7D32']}
+            />
           }
           renderItem={({ item }) => {
             const isOpen = expanded === item.id;
             return (
               <TouchableOpacity
-                style={[styles.card, item.featured && styles.featured]}
+                style={[styles.card, item.is_featured && styles.featured]}
                 onPress={() => setExpanded(isOpen ? null : item.id)}
                 activeOpacity={0.85}
               >
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1 }}>
-                    {item.category ? (
-                      <Text style={styles.category}>{item.category}</Text>
-                    ) : null}
+                    {item.category ? <Text style={styles.category}>{item.category}</Text> : null}
                     <Text style={styles.cardTitle}>{item.title}</Text>
                   </View>
                   <Ionicons
@@ -129,7 +139,12 @@ export default function HealthTipsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F5F7F5' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
   back: { padding: 8 },
   title: { flex: 1, fontSize: 18, fontWeight: '700', marginLeft: 4 },
   card: {
