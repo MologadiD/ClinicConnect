@@ -51,6 +51,7 @@ import PatientSearchScreen from '../screens/staff/PatientSearchScreen';
 import FirstResponderHomeScreen from '../screens/emergency/FirstResponderHomeScreen';
 import FirstResponderProfileScreen from '../screens/emergency/FirstResponderProfileScreen';
 import DoctorMedicalRecordScreen from '../screens/medical/DoctorMedicalRecordScreen';
+import WritePrescriptionScreen from '../screens/medical/WritePrescriptionScreen';
 
 import { RootStackParamList } from './types';
 import { useAuth, AppRole } from '../context/AuthContext';
@@ -101,6 +102,7 @@ function getRoleScreens(role: AppRole): React.ReactNode {
           <Stack.Screen name="PatientSearch" component={PatientSearchScreen} />
           <Stack.Screen name="PatientDetailView" component={PatientDetailViewScreen} />
           <Stack.Screen name="DoctorMedicalRecord" component={DoctorMedicalRecordScreen} />
+          <Stack.Screen name="WritePrescription" component={WritePrescriptionScreen} />
           <Stack.Screen name="MedicalRecord" component={MedicalRecordScreen} />
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="NotificationPreferences" component={NotificationPreferencesScreen} />

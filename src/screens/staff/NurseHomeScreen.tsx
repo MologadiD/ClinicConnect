@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabase/client';
+import AppointmentStatusActions from '../../components/AppointmentStatusActions';
 
 export default function NurseHomeScreen() {
   const navigation = useNavigation<any>();
@@ -157,8 +158,8 @@ export default function NurseHomeScreen() {
             <Text style={styles.empty}>No appointments in queue</Text>
           ) : (
             queue.map((a) => (
+              <View key={a.id}>
               <TouchableOpacity
-                key={a.id}
                 style={[styles.row, { backgroundColor: theme.colors.surface }]}
                 onPress={() =>
                   a.patient_id &&
@@ -183,6 +184,13 @@ export default function NurseHomeScreen() {
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#BDBDBD" />
               </TouchableOpacity>
+              <AppointmentStatusActions
+                appointmentId={a.id}
+                status={a.status}
+                slot={a.time_slots}
+                onChanged={load}
+              />
+              </View>
             ))
           )}
 

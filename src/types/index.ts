@@ -11,8 +11,7 @@ export type AppointmentStatus =
   | 'confirmed'
   | 'completed'
   | 'cancelled'
-  | 'no_show'
-  | 'no-show';
+  | 'no_show';
 
 export type Priority = 'low' | 'medium' | 'high' | 'critical';
 export type EmergencyStatus = 'pending' | 'dispatched' | 'resolved' | 'cancelled';

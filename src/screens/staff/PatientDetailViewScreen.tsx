@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../../services/supabase/client';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import PrescriptionList from '../../components/PrescriptionList';
 
 export default function PatientDetailViewScreen() {
   const navigation = useNavigation<any>();
@@ -244,6 +245,13 @@ export default function PatientDetailViewScreen() {
               </View>
             ))
           )}
+
+          <Text style={[styles.section, { marginHorizontal: 4 }]}>Prescriptions</Text>
+          <PrescriptionList
+            patientId={patientId}
+            patientName={`${patient.first_name || ''} ${patient.last_name || ''}`.trim()}
+            canCancel={role === 'Doctor'}
+          />
 
           <Text style={[styles.section, { marginHorizontal: 4 }]}>Medical records</Text>
           {records.length === 0 ? (
