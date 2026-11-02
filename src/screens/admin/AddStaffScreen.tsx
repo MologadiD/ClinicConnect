@@ -38,7 +38,22 @@ interface StaffFormData {
 }
 
 const ROLES = ['Doctor', 'Nurse', 'Admin', 'FirstResponder'] as const;
-const DEPARTMENTS = ['Cardiology', 'Pediatrics', 'Emergency', 'General', 'Maternity', 'Surgery'];
+
+// Clinical and ancillary departments a staff member can be assigned to.
+const DEPARTMENTS = [
+  'General Medicine',
+  'Nursing',
+  'Pediatrics & Child Health',
+  "Women's Health / OB-GYN",
+  'Chronic Care / Internal Medicine',
+  'Mental Health',
+  'Pharmacy',
+  'Laboratory / Diagnostics',
+  'Radiology / Imaging',
+] as const;
+
+// Every doctor added through this screen is a General Practitioner.
+const GP_SPECIALIZATION = 'General Practitioner (GP)';
 
 export default function AddStaffScreen() {
   const navigation = useNavigation();
@@ -54,7 +69,7 @@ export default function AddStaffScreen() {
     email: '',
     contactNumber: '',
     role: '',
-    specialization: '',
+    specialization: GP_SPECIALIZATION,
     licenseNumber: '',
     department: '',
     responseUnit: '',
@@ -113,12 +128,11 @@ export default function AddStaffScreen() {
     if (!form.role) newErrors.role = 'Please select a role';
     if (!form.clinicId) newErrors.clinicId = 'Please select a clinic';
 
-    if (form.role === 'Doctor') {
-      if (!form.specialization.trim()) newErrors.specialization = 'Specialization is required';
-      if (!form.licenseNumber.trim()) newErrors.licenseNumber = 'License number is required';
+    if (form.role === 'Doctor' && !form.licenseNumber.trim()) {
+      newErrors.licenseNumber = 'License number is required';
     }
-    if (form.role === 'Nurse' && !form.department) {
-      newErrors.department = 'Department is required';
+    if ((form.role === 'Doctor' || form.role === 'Nurse') && !form.department) {
+      newErrors.department = 'Please select a department';
     }
     if (form.role === 'FirstResponder') {
       if (!form.responseUnit.trim()) newErrors.responseUnit = 'Response unit is required';
@@ -160,8 +174,9 @@ export default function AddStaffScreen() {
       };
 
       if (form.role === 'Doctor') {
-        staffData.specialization = form.specialization;
+        staffData.specialization = GP_SPECIALIZATION;
         staffData.license_number = form.licenseNumber;
+        staffData.department = form.department;
       }
       if (form.role === 'Nurse') {
         staffData.department = form.department;
@@ -189,6 +204,16 @@ export default function AddStaffScreen() {
     }
   };
 
+  const renderDepartmentField = () => (
+    <Dropdown
+      label="Department"
+      value={form.department}
+      options={DEPARTMENTS}
+      onSelect={(v) => updateField('department', v)}
+      error={errors.department}
+    />
+  );
+
   const renderRoleSpecificFields = () => {
     switch (form.role) {
       case 'Doctor':
@@ -196,11 +221,10 @@ export default function AddStaffScreen() {
           <>
             <Input
               label="Specialization"
-              value={form.specialization}
-              onChangeText={(v) => updateField('specialization', v)}
-              error={errors.specialization}
-              placeholder="e.g., Cardiology"
+              value={GP_SPECIALIZATION}
+              editable={false}
             />
+            {renderDepartmentField()}
             <Input
               label="License Number"
               value={form.licenseNumber}
@@ -211,15 +235,7 @@ export default function AddStaffScreen() {
           </>
         );
       case 'Nurse':
-        return (
-          <Dropdown
-            label="Department"
-            value={form.department}
-            options={DEPARTMENTS}
-            onSelect={(v) => updateField('department', v)}
-            error={errors.department}
-          />
-        );
+        return renderDepartmentField();
       case 'FirstResponder':
         return (
           <>
