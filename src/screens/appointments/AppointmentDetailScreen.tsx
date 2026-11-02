@@ -15,6 +15,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../../services/supabase/client';
 import { RootStackParamList } from '../../navigation/types';
+import PrescriptionList from '../../components/PrescriptionList';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'AppointmentDetail'>;
 type RouteProp = import('@react-navigation/native').RouteProp<RootStackParamList, 'AppointmentDetail'>;
@@ -259,6 +260,8 @@ export default function AppointmentDetailScreen() {
             </View>
           </View>
         </View>
+
+        <PrescriptionList appointmentId={appointmentId} title="Prescriptions" hideWhenEmpty />
 
         {canCancel && (
           <TouchableOpacity

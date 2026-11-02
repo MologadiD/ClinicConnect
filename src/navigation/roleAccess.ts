@@ -28,6 +28,7 @@ export const ROLE_SCREENS: Record<NonNullable<AppRole>, (keyof RootStackParamLis
     'PatientSearch',
     'PatientDetailView',
     'DoctorMedicalRecord',
+    'WritePrescription',
     'MedicalRecord',
     'Notifications',
     'NotificationPreferences',
