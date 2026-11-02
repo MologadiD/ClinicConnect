@@ -47,7 +47,7 @@ export default function NearbyClinicsScreen() {
       const loc = await getBestLocation();
       setUserLoc(loc);
       const data = await clinicApi.getAll();
-      const withDist = data.map((c) => {
+      const withDist: ClinicWithDistance[] = data.map((c): ClinicWithDistance => {
         if (c.latitude && c.longitude) {
           return {
             ...c,
@@ -59,7 +59,11 @@ export default function NearbyClinicsScreen() {
             ),
           };
         }
-        return c;
+
+        return {
+          ...c,
+          distanceKm: undefined,
+        };
       });
       withDist.sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999));
       setClinics(withDist);
