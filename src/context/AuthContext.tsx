@@ -79,33 +79,44 @@ async function createPatientProfile(
   email: string,
   patientData: any
 ): Promise<PatientProfile> {
+  // If an earlier attempt already created the row, reuse it instead of failing.
+  const { data: existing } = await supabase
+    .from('patients')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (existing) return existing as PatientProfile;
+
+  const d = patientData || {};
   const profileData = {
     user_id: userId,
-    first_name: patientData.firstName || '',
-    last_name: patientData.lastName || '',
+    first_name: d.firstName || '',
+    last_name: d.lastName || '',
     email,
-    contact_number: patientData.contactNumber || '',
-    id_number: patientData.idNumber || '',
-    gender: patientData.gender || null,
-    ethnicity: patientData.ethnicity || null,
-    date_of_birth: patientData.dateOfBirth || null,
+    contact_number: d.contactNumber || '',
+    id_number: d.idNumber || '',
+    gender: d.gender || null,
+    ethnicity: d.ethnicity || null,
+    date_of_birth: d.dateOfBirth || null,
     address: {
-      streetNumber: patientData.streetNumber || '',
-      streetName: patientData.streetName || '',
-      city: patientData.city || '',
-      postalCode: patientData.postalCode || '',
-      province: patientData.province || '',
+      streetNumber: d.streetNumber || '',
+      streetName: d.streetName || '',
+      city: d.city || '',
+      postalCode: d.postalCode || '',
+      province: d.province || '',
     },
-    next_of_kin_name: patientData.nextOfKinName || null,
-    next_of_kin_relation: patientData.nextOfKinRelation || null,
-    next_of_kin_contact: patientData.nextOfKinContact || null,
+    // The registration screens send nextOfKinRelationship / nextOfKinContactNumber
+    // and sms / notifyEmail / inApp, so accept those names as well as the old ones.
+    next_of_kin_name: d.nextOfKinName || null,
+    next_of_kin_relation: d.nextOfKinRelationship || d.nextOfKinRelation || null,
+    next_of_kin_contact: d.nextOfKinContactNumber || d.nextOfKinContact || null,
     notification_preference: {
-      sms: !!patientData.smsNotifications,
-      email: !!patientData.emailNotifications,
-      inApp: !!patientData.inAppNotifications,
+      sms: !!(d.sms ?? d.smsNotifications),
+      email: !!(d.notifyEmail ?? d.emailNotifications),
+      inApp: !!(d.inApp ?? d.inAppNotifications),
     },
-    medical_aid_number: patientData.medicalAidNumber || null,
-    medical_aid_plan: patientData.medicalAidPlan || null,
+    medical_aid_number: d.medicalAidNumber || null,
+    medical_aid_plan: d.medicalAidPlan || null,
   };
 
   const { data, error } = await supabase.from('patients').insert(profileData).select().single();
@@ -122,6 +133,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<AppRole>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isFetching, setIsFetching] = useState(false);
+  // While signing up / verifying, the SIGNED_IN event fires before the patients
+  // row exists. Without this flag fetchProfile would run in that gap, find no
+  // row, and overwrite the role we are about to set.
+  const suppressProfileFetch = useRef(false);
+  const pendingRef = useRef<PendingRegistration | null>(null);
 
   const fetchProfile = async (userId: string, email?: string | null): Promise<PatientProfile | null> => {
     if (!userId) return null;
@@ -164,6 +180,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(null);
         setRole(staffData.role as StaffRole);
         return null;
+      }
+
+      // Verified, but the patients row was never written (e.g. the app was closed
+      // right after entering the code). Finish it from the saved registration.
+      const pending = pendingRef.current ?? (await readPending());
+      if (pending && email && normalizeEmail(email) === pending.email) {
+        try {
+          const created = await createPatientProfile(userId, pending.email, pending.patientData);
+          setProfile(created);
+          setStaffProfile(null);
+          setRole('patient');
+          pendingRef.current = null;
+          await clearPending();
+          return created;
+        } catch (e) {
+          console.error('❌ Could not finish pending registration:', e);
+        }
       }
 
       setProfile(null);
@@ -238,7 +271,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
 
-      if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
+      if (
+        session?.user &&
+        (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') &&
+        !suppressProfileFetch.current
+      ) {
         await fetchProfile(session.user.id, session.user.email);
       } else if (event === 'SIGNED_OUT') {
         setProfile(null);
@@ -275,45 +312,74 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = async (email: string, password: string, patientData: any) => {
     const cleanEmail = normalizeEmail(email);
+    suppressProfileFetch.current = true;
 
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password,
-    });
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+      });
 
-    if (authError) throw authError;
-    if (!authData.user) throw new Error('User creation failed');
+      if (authError) throw authError;
+      if (!authData.user) throw new Error('User creation failed');
 
-    if (Array.isArray(authData.user.identities) && authData.user.identities.length === 0) {
-      throw new Error('An account with this email already exists. Please sign in instead.');
+      if (Array.isArray(authData.user.identities) && authData.user.identities.length === 0) {
+        throw new Error('An account with this email already exists. Please sign in instead.');
+      }
+
+      // A session only comes back when "Confirm email" is OFF in Supabase.
+      if (authData.session) {
+        const created = await createPatientProfile(authData.user.id, cleanEmail, patientData);
+        setProfile(created);
+        setRole('patient');
+        return { needsVerification: false };
+      }
+
+      // Confirm email is ON: a code was emailed. Keep the form data until it is entered.
+      const pending: PendingRegistration = { email: cleanEmail, patientData };
+      pendingRef.current = pending;
+      await savePending(pending);
+      return { needsVerification: true };
+    } finally {
+      suppressProfileFetch.current = false;
     }
-
-    if (authData.session) {
-      const profile = await createPatientProfile(authData.user.id, cleanEmail, patientData);
-      setProfile(profile);
-      setRole('patient');
-    }
-
-    return {
-      needsVerification: false,
-    };
   };
 
   const verifyRegistration = async (email: string, code: string): Promise<PatientProfile> => {
     const cleanEmail = normalizeEmail(email);
-    const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
-      email: cleanEmail,
-      token: code,
-      type: 'signup',
-    });
+    suppressProfileFetch.current = true;
 
-    if (verifyError) throw verifyError;
-    if (!verifyData.user) throw new Error('Verification failed');
+    try {
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: code.trim(),
+        type: 'signup',
+      });
 
-    const profile = await createPatientProfile(verifyData.user.id, cleanEmail, {});
-    setProfile(profile);
-    setRole('patient');
-    return profile;
+      if (verifyError) throw verifyError;
+      if (!verifyData.user) throw new Error('Verification failed');
+
+      let pending = pendingRef.current;
+      if (!pending || pending.email !== cleanEmail) {
+        const stored = await readPending();
+        pending = stored && stored.email === cleanEmail ? stored : null;
+      }
+
+      const created = await createPatientProfile(
+        verifyData.user.id,
+        cleanEmail,
+        pending?.patientData || {}
+      );
+
+      setProfile(created);
+      setStaffProfile(null);
+      setRole('patient');
+      pendingRef.current = null;
+      await clearPending();
+      return created;
+    } finally {
+      suppressProfileFetch.current = false;
+    }
   };
 
   const resendVerificationCode = async (email: string) => {
@@ -326,6 +392,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const cancelRegistration = async () => {
+    pendingRef.current = null;
     await clearPending();
   };
 
