@@ -66,6 +66,9 @@ export type RootStackParamList = {
   FirstResponderProfile: undefined;
   DoctorMedicalRecord: { patientId?: string } | undefined;
   WritePrescription: { appointmentId: string; patientId: string; patientName?: string };
+  Referral: { patientId?: string; referralId?: string; mode?: 'list' | 'create' } | undefined;
+  Prescription: { prescriptionId: string };
+  PrescriptionList: { patientId?: string; appointmentId?: string; patientName?: string };
 };
 
 declare global {

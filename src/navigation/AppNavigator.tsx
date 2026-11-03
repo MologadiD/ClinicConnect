@@ -52,6 +52,8 @@ import FirstResponderHomeScreen from '../screens/emergency/FirstResponderHomeScr
 import FirstResponderProfileScreen from '../screens/emergency/FirstResponderProfileScreen';
 import DoctorMedicalRecordScreen from '../screens/medical/DoctorMedicalRecordScreen';
 import WritePrescriptionScreen from '../screens/medical/WritePrescriptionScreen';
+import ReferralScreen from '../screens/medical/Referralscreen';
+import PrescriptionScreen from '../screens/medical/PrescriptionScreen';
 
 import { RootStackParamList } from './types';
 import { useAuth, AppRole } from '../context/AuthContext';
@@ -76,6 +78,8 @@ function getRoleScreens(role: AppRole): React.ReactNode {
           <Stack.Screen name="PatientHome" component={PatientHomeScreen} />
           <Stack.Screen name="PatientProfile" component={PatientProfileScreen} />
           <Stack.Screen name="MedicalRecord" component={MedicalRecordScreen} />
+          <Stack.Screen name="Referral" component={ReferralScreen} />
+          <Stack.Screen name="Prescription" component={PrescriptionScreen} />
           <Stack.Screen name="NearbyClinics" component={NearbyClinicsScreen} />
           <Stack.Screen name="SelectClinic" component={SelectClinicScreen} />
           <Stack.Screen name="BookAppointment" component={BookAppointmentScreen} />
@@ -103,6 +107,7 @@ function getRoleScreens(role: AppRole): React.ReactNode {
           <Stack.Screen name="PatientDetailView" component={PatientDetailViewScreen} />
           <Stack.Screen name="DoctorMedicalRecord" component={DoctorMedicalRecordScreen} />
           <Stack.Screen name="WritePrescription" component={WritePrescriptionScreen} />
+          <Stack.Screen name="Referral" component={ReferralScreen} />
           <Stack.Screen name="MedicalRecord" component={MedicalRecordScreen} />
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="NotificationPreferences" component={NotificationPreferencesScreen} />
@@ -118,6 +123,7 @@ function getRoleScreens(role: AppRole): React.ReactNode {
           <Stack.Screen name="PatientSearch" component={PatientSearchScreen} />
           <Stack.Screen name="PatientDetailView" component={PatientDetailViewScreen} />
           <Stack.Screen name="MedicalRecord" component={MedicalRecordScreen} />
+          <Stack.Screen name="Referral" component={ReferralScreen} />
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen name="NotificationPreferences" component={NotificationPreferencesScreen} />
         </>

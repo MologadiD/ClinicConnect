@@ -253,6 +253,53 @@ export default function PatientDetailViewScreen() {
             canCancel={role === 'Doctor'}
           />
 
+          <Text style={[styles.section, { marginHorizontal: 4 }]}>Referrals</Text>
+          <View style={[styles.card, { backgroundColor: theme.colors.surface, marginBottom: 12 }]}>
+            <Text style={styles.note}>
+              Refer this patient to a specialist or for admission when their condition requires it.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              {(role === 'Doctor' || role === 'Nurse') && (
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#6B7C5C',
+                    borderRadius: 10,
+                    paddingVertical: 12,
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                  onPress={() =>
+                    navigation.navigate('Referral', { patientId, mode: 'create' })
+                  }
+                >
+                  <Ionicons name="arrow-forward-circle-outline" size={18} color="#fff" />
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                    Refer patient
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  borderWidth: 1.5,
+                  borderColor: '#6B7C5C',
+                  borderRadius: 10,
+                  paddingVertical: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onPress={() => navigation.navigate('Referral', { patientId })}
+              >
+                <Text style={{ color: '#6B7C5C', fontWeight: '700', fontSize: 14 }}>
+                  View referrals
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           <Text style={[styles.section, { marginHorizontal: 4 }]}>Medical records</Text>
           {records.length === 0 ? (
             <Text style={styles.empty}>No records yet</Text>

@@ -292,6 +292,34 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
 }
 
 /**
+ * Notify a patient using their patients.id (not their user id).
+ * Looks up patients.user_id, then sends a push + in-app notification.
+ * Never throws: a notification failure must not break the caller's save.
+ */
+export async function notifyPatient(patientId: string, payload: PushPayload): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('patients')
+      .select('user_id')
+      .eq('id', patientId)
+      .maybeSingle();
+
+    if (error || !data?.user_id) {
+      console.warn('[Push] Could not resolve patient user for notification:', error?.message);
+      return false;
+    }
+
+    return await sendPushToUser(data.user_id as string, {
+      ...payload,
+      data: { ...payload.data, patientId },
+    });
+  } catch (e) {
+    console.warn('[Push] notifyPatient failed:', e);
+    return false;
+  }
+}
+
+/**
  * Send an emergency alert push to a specific first responder.
  * Includes the alert's priority + location details via the payload data.
  */
@@ -324,5 +352,6 @@ export default {
   createInAppNotification,
   sendToExpoPushToken,
   sendPushToUser,
+  notifyPatient,
   sendEmergencyToResponder,
 };
