@@ -1,13 +1,8 @@
-// src/utils/permissions.ts
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import type { StaffRole } from '../types';
 
-// ---------------------------------------------------------------------------
 // Role permissions
-// ---------------------------------------------------------------------------
-// Mirrors the checks already in the screens (e.g. only Doctor, Nurse and Admin can
-// edit patient records). Change the table here and every caller follows.
 
 export type AppRole = 'patient' | StaffRole;
 export type Permission = 'records:write' | 'admin:manage' | 'emergency:respond';
@@ -24,9 +19,7 @@ export function hasPermission(role: AppRole | null | undefined, permission: Perm
   return !!role && ROLE_PERMISSIONS[role]?.includes(permission);
 }
 
-// ---------------------------------------------------------------------------
 // Device permissions (each resolves to true when granted)
-// ---------------------------------------------------------------------------
 
 export async function ensureLocationPermission(): Promise<boolean> {
   const current = await Location.getForegroundPermissionsAsync();
