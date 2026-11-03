@@ -1,4 +1,5 @@
 import { supabase } from '../supabase/client';
+import { notifyPatient } from '../notifications/pushNotifications';
 
 export type ReferralUrgency = 'routine' | 'urgent' | 'emergency';
 export type ReferralStatus =
@@ -141,7 +142,20 @@ export const referralsApi = {
       .single();
 
     if (error) throw error;
-    return data as Referral;
+    const created = data as Referral;
+
+    // Tell the patient (push + in-app). Never blocks or fails the create.
+    notifyPatient(created.patient_id, {
+      title: 'New specialist referral',
+      body: `You have a new ${created.specialist_type} referral. Tap to view and download the letter.`,
+      data: {
+        type: 'referral',
+        screen: 'Referral',
+        referralId: created.id,
+      },
+    }).catch(() => {});
+
+    return created;
   },
 
   updateStatus: async (id: string, status: ReferralStatus): Promise<void> => {
