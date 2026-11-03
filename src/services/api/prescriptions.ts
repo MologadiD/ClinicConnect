@@ -23,6 +23,14 @@ export interface Prescription {
   valid_until?: string | null;
   created_at?: string;
   updated_at?: string;
+  /**
+   * Prescriber details copied onto the prescription when it was issued, so a
+   * patient's copy can show who issued it. Needs the columns doctor_name,
+   * doctor_specialization and doctor_license_number on public.prescriptions.
+   */
+  doctor_name?: string | null;
+  doctor_specialization?: string | null;
+  doctor_license_number?: string | null;
   /** Joins */
   doctor?: {
     first_name?: string;
@@ -69,6 +77,38 @@ export function effectiveStatus(
 /** True only while the prescription may still be used. */
 export function isUsable(rx: Pick<Prescription, 'status' | 'valid_until'>): boolean {
   return effectiveStatus(rx) === 'active';
+}
+
+/**
+ * Who issued a prescription. Prefers the details stored on the prescription
+ * when it was issued. Falls back to the staff record joined on read (staff can
+ * read it, patients cannot), then to a generic label.
+ */
+export function prescriberOf(
+  rx: Pick<
+    Prescription,
+    'doctor' | 'doctor_name' | 'doctor_specialization' | 'doctor_license_number'
+  >
+): { name: string; specialization: string | null; licenseNumber: string | null; known: boolean } {
+  const joined = rx.doctor
+    ? `${rx.doctor.first_name || ''} ${rx.doctor.last_name || ''}`.trim()
+    : '';
+  const full = (rx.doctor_name || joined || '').trim().replace(/^dr\.?\s+/i, '');
+  return {
+    name: full ? `Dr ${full}` : 'Doctor',
+    specialization: rx.doctor_specialization || rx.doctor?.specialization || null,
+    licenseNumber: rx.doctor_license_number || null,
+    known: !!full,
+  };
+}
+
+/** True when the database rejected an insert because a column does not exist yet. */
+function isMissingColumnError(error: { code?: string; message?: string }): boolean {
+  return (
+    error.code === 'PGRST204' ||
+    error.code === '42703' ||
+    /column .* does not exist|could not find the .* column/i.test(error.message || '')
+  );
 }
 
 function isRealDate(value: string): boolean {
@@ -207,24 +247,47 @@ export const prescriptionsApi = {
       );
     }
 
-    const { data, error } = await supabase
+    // Copy the prescriber's details onto the prescription. Patients cannot read the
+    // staff table, so without this their copy could not say who issued it.
+    const { data: doc } = await supabase
+      .from('staff')
+      .select('first_name, last_name, specialization, license_number')
+      .eq('id', input.doctor_id)
+      .maybeSingle();
+    const snapshot = doc
+      ? {
+          doctor_name: `${doc.first_name || ''} ${doc.last_name || ''}`.trim() || null,
+          doctor_specialization: doc.specialization || null,
+          doctor_license_number: doc.license_number || null,
+        }
+      : {};
+
+    const row = {
+      patient_id: input.patient_id,
+      doctor_id: input.doctor_id,
+      appointment_id: input.appointment_id,
+      medical_record_id: input.medical_record_id ?? null,
+      medications,
+      diagnosis: input.diagnosis?.trim() || null,
+      notes: input.notes?.trim() || null,
+      valid_until: validUntil,
+      status: 'active',
+    };
+
+    let result = await supabase
       .from('prescriptions')
-      .insert({
-        patient_id: input.patient_id,
-        doctor_id: input.doctor_id,
-        appointment_id: input.appointment_id,
-        medical_record_id: input.medical_record_id ?? null,
-        medications,
-        diagnosis: input.diagnosis?.trim() || null,
-        notes: input.notes?.trim() || null,
-        valid_until: validUntil,
-        status: 'active',
-      })
+      .insert({ ...row, ...snapshot })
       .select()
       .single();
 
-    if (error) throw error;
-    return data as Prescription;
+    if (result.error && Object.keys(snapshot).length > 0 && isMissingColumnError(result.error)) {
+      // The database has not been migrated yet: issue without the copy so prescribing keeps working.
+      console.warn('prescriptions.doctor_* columns missing; issuing without prescriber snapshot.');
+      result = await supabase.from('prescriptions').insert(row).select().single();
+    }
+
+    if (result.error) throw result.error;
+    return result.data as Prescription;
   },
 
   /** Doctor withdraws an active prescription (e.g. issued in error). */
@@ -250,12 +313,9 @@ export const prescriptionsApi = {
    * Build a plain-text prescription suitable for sharing / "download".
    */
   formatAsText: (rx: Prescription, patientName?: string): string => {
-    const doctorName = rx.doctor
-      ? `Dr ${rx.doctor.first_name || ''} ${rx.doctor.last_name || ''}`.trim()
-      : 'Doctor';
-    const specialty = rx.doctor?.specialization
-      ? ` (${rx.doctor.specialization})`
-      : '';
+    const prescriber = prescriberOf(rx);
+    const doctorName = prescriber.name;
+    const specialty = prescriber.specialization ? ` (${prescriber.specialization})` : '';
     const issued = rx.issued_at
       ? new Date(rx.issued_at).toLocaleDateString('en-ZA', {
           year: 'numeric',
@@ -285,6 +345,7 @@ export const prescriptionsApi = {
       '',
       `Patient: ${patientName || '—'}`,
       `Issued by: ${doctorName}${specialty}`,
+      prescriber.licenseNumber ? `Registration no.: ${prescriber.licenseNumber}` : '',
       `Date: ${issued}`,
       `Valid until: ${valid}`,
       `Status: ${effectiveStatus(rx)}`,
@@ -308,12 +369,9 @@ export const prescriptionsApi = {
    * Build a clean, print-ready HTML document for PDF generation.
    */
   formatAsHtml: (rx: Prescription, patientName?: string): string => {
-    const doctorName = rx.doctor
-      ? `Dr ${rx.doctor.first_name || ''} ${rx.doctor.last_name || ''}`.trim()
-      : 'Doctor';
-    const specialty = rx.doctor?.specialization
-      ? ` · ${rx.doctor.specialization}`
-      : '';
+    const prescriber = prescriberOf(rx);
+    const doctorName = prescriber.name;
+    const specialty = prescriber.specialization ? ` · ${prescriber.specialization}` : '';
     const issued = rx.issued_at
       ? new Date(rx.issued_at).toLocaleDateString('en-ZA', {
           year: 'numeric',
@@ -463,6 +521,7 @@ export const prescriptionsApi = {
         <div class="meta-item">
           <label>Issued by</label>
           <span>${escapeHtml(doctorName)}${escapeHtml(specialty)}</span>
+          ${prescriber.licenseNumber ? `<br><span style="font-size:11px;font-weight:400;color:#666;">Reg. no. ${escapeHtml(prescriber.licenseNumber)}</span>` : ''}
         </div>
         <div class="meta-item">
           <label>Date issued</label>
