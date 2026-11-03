@@ -303,6 +303,220 @@ export const prescriptionsApi = {
       .filter(Boolean)
       .join('\n');
   },
+
+  /**
+   * Build a clean, print-ready HTML document for PDF generation.
+   */
+  formatAsHtml: (rx: Prescription, patientName?: string): string => {
+    const doctorName = rx.doctor
+      ? `Dr ${rx.doctor.first_name || ''} ${rx.doctor.last_name || ''}`.trim()
+      : 'Doctor';
+    const specialty = rx.doctor?.specialization
+      ? ` · ${rx.doctor.specialization}`
+      : '';
+    const issued = rx.issued_at
+      ? new Date(rx.issued_at).toLocaleDateString('en-ZA', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : '—';
+    const valid = rx.valid_until
+      ? new Date(rx.valid_until).toLocaleDateString('en-ZA', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : 'N/A';
+    const status = effectiveStatus(rx);
+    const usable = isUsable(rx);
+
+    const medRows = (rx.medications || [])
+      .map(
+        (m, i) => `
+        <tr>
+          <td style="padding:10px 8px;border-bottom:1px solid #e8e8e8;vertical-align:top;width:28px;color:#888;">${i + 1}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #e8e8e8;">
+            <div style="font-weight:700;font-size:14px;color:#1a1a1a;">${escapeHtml(m.name)}</div>
+            <div style="font-size:12px;color:#555;margin-top:3px;">
+              ${escapeHtml(m.dosage)} &nbsp;·&nbsp; ${escapeHtml(m.frequency)} &nbsp;·&nbsp; ${escapeHtml(m.duration)}
+            </div>
+            ${m.instructions ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;">${escapeHtml(m.instructions)}</div>` : ''}
+          </td>
+        </tr>`
+      )
+      .join('');
+
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Prescription</title>
+  <style>
+    @page { margin: 36px; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #222;
+      font-size: 13px;
+      line-height: 1.45;
+      margin: 0;
+      padding: 0;
+    }
+    .header {
+      background: #6B7C5C;
+      color: #fff;
+      padding: 18px 22px;
+      border-radius: 8px 8px 0 0;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .header p {
+      margin: 4px 0 0;
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    .card {
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .body { padding: 20px 22px; }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 24px;
+      margin-bottom: 18px;
+    }
+    .meta-item label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #888;
+      margin-bottom: 2px;
+    }
+    .meta-item span {
+      font-size: 13px;
+      font-weight: 600;
+      color: #222;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #6B7C5C;
+      margin: 18px 0 8px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #6B7C5C;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-active { background: #E8F5E9; color: #2E7D32; }
+    .badge-expired { background: #FFF3E0; color: #E65100; }
+    .badge-cancelled { background: #FFEBEE; color: #C62828; }
+    .badge-completed { background: #F3E5F5; color: #7B1FA2; }
+    .warning {
+      background: #FFEBEE;
+      color: #C62828;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 12px;
+      margin-bottom: 16px;
+    }
+    .footer {
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid #e8e8e8;
+      font-size: 11px;
+      color: #888;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Clinic-Connect Prescription</h1>
+      <p>Electronic prescription · Present at a registered pharmacy</p>
+    </div>
+    <div class="body">
+      ${!usable ? `<div class="warning">⚠ This prescription is no longer valid (${status})</div>` : ''}
+
+      <div class="meta-grid">
+        <div class="meta-item">
+          <label>Patient</label>
+          <span>${escapeHtml(patientName || '—')}</span>
+        </div>
+        <div class="meta-item">
+          <label>Issued by</label>
+          <span>${escapeHtml(doctorName)}${escapeHtml(specialty)}</span>
+        </div>
+        <div class="meta-item">
+          <label>Date issued</label>
+          <span>${escapeHtml(issued)}</span>
+        </div>
+        <div class="meta-item">
+          <label>Valid until</label>
+          <span>${escapeHtml(valid)}</span>
+        </div>
+        <div class="meta-item">
+          <label>Status</label>
+          <span class="badge badge-${status}">${status.toUpperCase()}</span>
+        </div>
+        <div class="meta-item">
+          <label>Prescription ID</label>
+          <span style="font-family:monospace;font-size:12px;">${rx.id.slice(0, 8).toUpperCase()}</span>
+        </div>
+      </div>
+
+      ${rx.diagnosis ? `
+        <div class="section-title">Diagnosis</div>
+        <p style="margin:0 0 8px;font-size:14px;">${escapeHtml(rx.diagnosis)}</p>
+      ` : ''}
+
+      <div class="section-title">Medications</div>
+      <table>
+        <tbody>
+          ${medRows || '<tr><td style="padding:12px 0;color:#888;">No medications listed</td></tr>'}
+        </tbody>
+      </table>
+
+      ${rx.notes ? `
+        <div class="section-title">Notes</div>
+        <p style="margin:0;font-size:13px;color:#444;">${escapeHtml(rx.notes)}</p>
+      ` : ''}
+
+      <div class="footer">
+        Generated by Clinic-Connect · This is an official electronic prescription.<br/>
+        Please verify patient identity before dispensing.
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+  },
 };
 
-export default prescriptionsApi;
+/** Minimal HTML escaping for the PDF template. */
+function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
