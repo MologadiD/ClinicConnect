@@ -1,5 +1,6 @@
 import { supabase } from '../supabase/client';
 import { toDateString } from '../slots';
+import { notifyPatient } from '../notifications/pushNotifications';
 
 export interface MedicationItem {
   name: string;
@@ -224,7 +225,23 @@ export const prescriptionsApi = {
       .single();
 
     if (error) throw error;
-    return data as Prescription;
+    const created = data as Prescription;
+
+    // Tell the patient (push + in-app). Never blocks or fails the create.
+    notifyPatient(created.patient_id, {
+      title: 'New prescription',
+      body: `Your doctor issued a prescription (${medications.length} medication${
+        medications.length > 1 ? 's' : ''
+      }), valid until ${validUntil}. Tap to view and download it.`,
+      data: {
+        type: 'prescription',
+        screen: 'Prescription',
+        prescriptionId: created.id,
+        appointmentId: created.appointment_id ?? undefined,
+      },
+    }).catch(() => {});
+
+    return created;
   },
 
   /** Doctor withdraws an active prescription (e.g. issued in error). */
@@ -519,4 +536,3 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
-
