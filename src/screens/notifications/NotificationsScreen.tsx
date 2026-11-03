@@ -15,7 +15,7 @@ import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase/client';
 
 export default function NotificationsScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const { user } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,6 +49,38 @@ export default function NotificationsScreen() {
     setItems((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
   };
 
+  const openNotification = async (item: any) => {
+    await markRead(item.id);
+
+    const data = item.data || {};
+    const type = item.type || data.type;
+
+    if (type === 'referral' || data.screen === 'Referral') {
+      navigation.navigate('Referral', {
+        referralId: data.referralId,
+        patientId: data.patientId,
+      });
+      return;
+    }
+
+    if (data.prescriptionId) {
+      navigation.navigate('Prescription', { prescriptionId: data.prescriptionId });
+      return;
+    }
+
+    if (type === 'prescription' || data.screen === 'MedicalRecord') {
+      navigation.navigate('MedicalRecord', {
+        patientId: data.patientId,
+      });
+      return;
+    }
+
+    if (data.appointmentId) {
+      navigation.navigate('AppointmentDetail', { appointmentId: data.appointmentId });
+      return;
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
@@ -76,13 +108,19 @@ export default function NotificationsScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity
               style={[styles.card, !item.is_read && styles.unread]}
-              onPress={() => markRead(item.id)}
+              onPress={() => openNotification(item)}
             >
               <Text style={styles.cardTitle}>{item.title || 'Notification'}</Text>
               <Text style={styles.cardBody}>{item.message}</Text>
               <Text style={styles.cardTime}>
                 {item.created_at ? new Date(item.created_at).toLocaleString('en-ZA') : ''}
               </Text>
+              {(item.type === 'referral' || item.data?.type === 'referral') && (
+                <Text style={styles.cta}>Tap to view referral letter →</Text>
+              )}
+              {(item.type === 'prescription' || item.data?.type === 'prescription') && (
+                <Text style={styles.cta}>Tap to view and download prescription →</Text>
+              )}
             </TouchableOpacity>
           )}
         />
@@ -107,4 +145,5 @@ const styles = StyleSheet.create({
   cardTitle: { fontWeight: '700', color: '#212121', marginBottom: 4 },
   cardBody: { fontSize: 14, color: '#616161' },
   cardTime: { fontSize: 11, color: '#9E9E9E', marginTop: 6 },
+  cta: { fontSize: 12, color: '#6B7C5C', fontWeight: '700', marginTop: 8 },
 });
