@@ -194,7 +194,7 @@ export async function createInAppNotification(opts: {
 // Backend-style push dispatch via Expo Push API + in-app notification mirror
 // ============================================================================
 
-const EXPO_PUSH_SEND_URL = 'https://exp.host/--/push/v2/send';
+const EXPO_PUSH_SEND_URL = 'https://exp.host/--/api/v2/push/send';
 
 export interface PushPayload {
   title: string;
