@@ -190,6 +190,130 @@ export async function createInAppNotification(opts: {
   if (error) console.warn('[Push] Failed to create in-app notification:', error.message);
 }
 
+// ============================================================================
+// Backend-style push dispatch via Expo Push API + in-app notification mirror
+// ============================================================================
+
+const EXPO_PUSH_SEND_URL = 'https://exp.host/--/push/v2/send';
+
+export interface PushPayload {
+  title: string;
+  body: string;
+  data?: Record<string, unknown>;
+}
+
+interface ExpoPushSendResponse {
+  data?: Array<{ id?: string; status?: string }>;
+  errors?: unknown[];
+  [key: string]: unknown;
+}
+
+async function sendToExpoPushToken(to: string, payload: PushPayload): Promise<boolean> {
+  try {
+    const response = await fetch(EXPO_PUSH_SEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          {
+            to,
+            title: payload.title,
+            body: payload.body,
+            data: payload.data ?? {},
+            sound: 'default',
+            priority: 'high',
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      console.warn('[Push] Expo push request failed:', response.status, body);
+      return false;
+    }
+
+    const json = (await response.json()) as ExpoPushSendResponse;
+    const results = json.data ?? [];
+    const failed =
+      results.length > 0 && results.some((r) => !r?.status || r.status === 'error');
+
+    if (failed) {
+      console.warn('[Push] Expo push delivery reported failure:', json.errors ?? results);
+    }
+
+    return !failed;
+  } catch (error) {
+    console.warn('[Push] Expo push send error:', error);
+    return false;
+  }
+}
+
+/**
+ * Send a push notification to a user through all their active device tokens,
+ * then mirror it into the in-app notifications table so it also shows up in
+ * the in-app notification center.
+ */
+export async function sendPushToUser(userId: string, payload: PushPayload): Promise<boolean> {
+  const { data: tokens, error } = await supabase
+    .from('device_tokens')
+    .select('token')
+    .eq('user_id', userId)
+    .eq('is_active', true);
+
+  if (error) {
+    console.warn('[Push] Failed to load device tokens for user:', userId, error.message);
+    return false;
+  }
+
+  const tokenList = ((tokens ?? []) as Array<{ token: string }>)
+    .map((t) => t.token)
+    .filter(Boolean) as string[];
+
+  let delivered = false;
+  for (const token of tokenList) {
+    const ok = await sendToExpoPushToken(token, payload);
+    if (ok) delivered = true;
+  }
+
+  try {
+    await createInAppNotification({
+      userId,
+      title: payload.title,
+      message: payload.body,
+      type: (payload.data?.type as 'appointment_reminder' | 'alert' | 'general' | 'emergency' | 'system' | 'prescription' | 'referral') ?? 'general',
+      data: payload.data,
+    });
+  } catch (e) {
+    console.warn('[Push] Failed to create in-app notification mirror:', e);
+  }
+
+  return delivered;
+}
+
+/**
+ * Send an emergency alert push to a specific first responder.
+ * Includes the alert's priority + location details via the payload data.
+ */
+export async function sendEmergencyToResponder(
+  responderUserId: string,
+  payload: PushPayload
+): Promise<boolean> {
+  const delivered = await sendPushToUser(responderUserId, {
+    ...payload,
+    data: {
+      ...payload.data,
+      type: 'emergency',
+    },
+  });
+
+  if (delivered) {
+    console.log('[Push] Sent emergency alert to responder', responderUserId);
+  }
+
+  return delivered;
+}
+
 export default {
   registerForPushNotificationsAsync,
   saveDeviceToken,
@@ -198,4 +322,7 @@ export default {
   scheduleLocalNotification,
   cancelLocalNotification,
   createInAppNotification,
+  sendToExpoPushToken,
+  sendPushToUser,
+  sendEmergencyToResponder,
 };

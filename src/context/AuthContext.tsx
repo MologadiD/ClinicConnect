@@ -5,6 +5,7 @@ import { supabase } from '../services/supabase/client';
 import { PatientProfile } from '../services/api/profile';
 import { Session, User } from '@supabase/supabase-js';
 import { Staff, StaffRole } from '../types';
+import {setupPushForUser, deactivateDeviceToken, } from '../services/notifications/pushNotifications';
 
 // Registration details are kept here between "sign up" and "email verified".
 // The patients row can only be written once the user has a session, which they
@@ -138,6 +139,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // row, and overwrite the role we are about to set.
   const suppressProfileFetch = useRef(false);
   const pendingRef = useRef<PendingRegistration | null>(null);
+
+    // Expo push token for this phone, kept so we can switch it off on logout.
+  const pushTokenRef = useRef<string | null>(null);
+
+  // Register this phone for push notifications once a user is fully signed in
+  // (profile loaded, so `role` is set). Covers Patient, Nurse, Doctor and
+  // FirstResponder, both on a fresh login and when a saved session is restored.
+  useEffect(() => {
+    if (!user?.id || !role) return;
+    let cancelled = false;
+    setupPushForUser(user.id)
+      .then((token) => {
+        if (!cancelled) pushTokenRef.current = token;
+      })
+      .catch((e) => console.warn('[Push] Could not register this device:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, role]);
 
   const fetchProfile = async (userId: string, email?: string | null): Promise<PatientProfile | null> => {
     if (!userId) return null;
@@ -396,7 +416,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearPending();
   };
 
-  const logout = async () => {
+    const logout = async () => {
+    // Stop pushes for this user reaching this phone. Must run before signOut
+    // so the database request is still authenticated.
+    const pushToken = pushTokenRef.current;
+    if (pushToken) {
+      await deactivateDeviceToken(pushToken).catch(() => {});
+      pushTokenRef.current = null;
+    }
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   };

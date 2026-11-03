@@ -20,6 +20,7 @@ import { RootStackParamList } from '../../navigation/types';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabase/client';
+import { sendDueAppointmentReminders } from '../../services/notifications/appointmentReminders';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -90,6 +91,8 @@ export default function PatientHomeScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchUpcoming();
+      // Daily sweep: fire due appointment reminders for upcoming appointments.
+      sendDueAppointmentReminders().catch(() => {});
     }, [fetchUpcoming])
   );
 
