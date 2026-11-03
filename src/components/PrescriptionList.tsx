@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   effectiveStatus,
   isUsable,
+  prescriberOf,
   Prescription,
   prescriptionsApi,
 } from '../services/api/prescriptions';
@@ -119,9 +120,8 @@ export default function PrescriptionList({
         const status = effectiveStatus(rx);
         const chip = CHIP[status] || CHIP.active;
         const usable = isUsable(rx);
-        const doctor = rx.doctor
-          ? `Dr ${rx.doctor.first_name || ''} ${rx.doctor.last_name || ''}`.trim()
-          : null;
+        const prescriber = prescriberOf(rx);
+        const doctor = prescriber.known ? prescriber.name : null;
         return (
           <View key={rx.id} style={[styles.card, !usable && styles.cardMuted]}>
             <View style={styles.headRow}>
