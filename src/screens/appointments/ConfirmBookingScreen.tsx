@@ -20,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase/client';
 import { ensureNextDaySlot } from '../../services/slots';
 import { RootStackParamList } from '../../navigation/types';
+import { sendPatientAppointmentReminder } from '../../services/notifications/appointmentReminders';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'ConfirmBooking'>;
 type RouteProp = import('@react-navigation/native').RouteProp<RootStackParamList, 'ConfirmBooking'>;
@@ -102,6 +103,28 @@ export default function ConfirmBookingScreen() {
 
       // Keep the clinic's daily schedule rolling (best effort)
       await ensureNextDaySlot(timeSlotId).catch(() => {});
+
+      // Fire the appointment reminder(s) for the newly created appointment,
+      // honouring the patient's chosen reminder timing.
+      try {
+        const { data: createdAppointment, error: fetchErr } = await supabase
+          .from('appointments')
+          .select('*, clinics(*), services(*), time_slots(*)')
+          .eq('id', result.appointment_id)
+          .single();
+
+        if (!fetchErr && createdAppointment) {
+          const prefs = (profile?.notification_preference || {}) as Record<string, unknown>;
+          const reminderTiming =
+            prefs.appointment_reminder === '30_min_before'
+              ? '30_min_before'
+              : 'day_before';
+
+          await sendPatientAppointmentReminder(user.id, createdAppointment, reminderTiming, new Date());
+        }
+      } catch (e) {
+        console.warn('[Reminders] Failed to send appointment reminder after booking:', e);
+      }
 
       navigation.replace('BookingSuccess', {
         clinicName,
