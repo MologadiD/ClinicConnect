@@ -17,6 +17,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../services/supabase/client';
 import AppointmentStatusActions from '../../components/AppointmentStatusActions';
+import { sendTodaysMorningSummaries } from '@/services/notifications/appointmentReminders';
 
 export default function DoctorHomeScreen() {
   const navigation = useNavigation<any>();
@@ -90,6 +91,9 @@ export default function DoctorHomeScreen() {
     useCallback(() => {
       setLoading(true);
       load();
+      // Morning summary for today's appointments (no-op if the staff member
+      // has no appointments today).
+      sendTodaysMorningSummaries().catch(() => {});
     }, [load])
   );
 
