@@ -28,6 +28,21 @@ const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d
 /** Tracks which (staff, day) morning summaries have already been sent. */
 const morningSummarySentFor = new Set<string>();
 
+
+/** Tracks which (appointment, reminder type) patient reminders were already sent. */
+const reminderSentFor = new Set<string>();
+
+/**
+ * The appointment's date and start time live on the joined `time_slots` row,
+ * not on the `appointments` table itself.
+ */
+function getSlotStart(appt: any): { date: string; time: string } | null {
+  const date = appt?.time_slots?.date ?? appt?.appointment_date;
+  const time = appt?.time_slots?.start_time ?? appt?.start_time;
+  if (!date || !time) return null;
+  return { date, time };
+}
+
 /** Offset used for the patient reminder, derived from their preference. */
 export function getReminderOffsetMs(preference: string | null | undefined): number {
   if (preference === PATIENT_REMINDER_PREFERENCE_30_MINUTES_BEFORE) {
@@ -66,21 +81,26 @@ export async function sendPatientAppointmentReminder(
   preference: string | null | undefined,
   now: Date = new Date()
 ): Promise<void> {
-  const sendAt = getReminderSendAt(
-    appointment.appointment_date ?? appointment.start_time ?? '',
-    preference,
-    now
-  );
+  
+    const start = getSlotStart(appointment);
+  if (!start) return; // no date/time to work from
+
+  const sendAt = getReminderSendAt(`${start.date}T${start.time}`, preference, now);
 
   if (!sendAt) return; // reminder not due yet
 
-  const startTime = appointment.start_time ?? 'unknown';
+  // Only send each reminder once per app session.
+  const sentKey = `${appointment.id}:${preference ?? 'day_before'}`;
+  if (reminderSentFor.has(sentKey)) return;
+  reminderSentFor.add(sentKey);
+
+  const startTime = start.time.slice(0, 5);
   const clinicName = appointment.clinics?.clinic_name ?? 'clinic';
   const serviceName = appointment.services?.service_name ?? 'appointment';
 
   const delivered = await sendPushToUser(patientUserId, {
     title: 'Appointment reminder',
-    body: `You have an appointment at ${clinicName} (${serviceName}) on ${appointment.appointment_date ?? ''} at ${startTime}.`,
+    body: `You have an appointment at ${clinicName} (${serviceName}) on ${start.date} at ${startTime}.`,
     data: {
       type: 'appointment_reminder',
       appointmentId: appointment.id,
@@ -130,10 +150,11 @@ function buildMorningSummaryMessage(
   if (!appointments.length) return null;
 
   const lines = appointments.map((appt) => {
-    const time = appt.start_time ?? '';
-    const clinic = appt.clinics?.clinic_name ?? 'clinic';
-    const service = appt.services?.service_name ?? 'appointment';
-    return `- ${time ? `At ${time}` : ''} ${appt.appointment_date ?? ''} — ${service} at ${clinic}`;
+   const start = getSlotStart(appt);
+   const time = start ? start.time.slice(0, 5) : '';
+   const clinic = appt.clinics?.clinic_name ?? 'clinic';
+   const service = appt.services?.service_name ?? 'appointment';
+   return `- ${time ? `At ${time}` : 'Today'}: ${service} at ${clinic}`;
   });
 
   const firstAppt = appointments[0];
@@ -189,9 +210,11 @@ export async function sendTodaysMorningSummaries(
 
   const { data: appointments, error } = await supabase
     .from('appointments')
-    .select('*')
+    .select(
+      '*, patients ( first_name, last_name ), clinics (*), services (*), time_slots!inner ( date, start_time )'
+    )
     .in('status', ['booked', 'confirmed', 'completed'])
-    .eq('appointment_date', todaysDate);
+    .eq('time_slots.date', todaysDate);
 
   if (error) {
     console.warn('[Reminders] Failed to load todays appointments for summaries:', error.message);
@@ -214,10 +237,12 @@ export async function sendDueAppointmentReminders(now: Date = new Date()): Promi
 
   const { data: appointments, error } = await supabase
     .from('appointments')
-    .select('*, patients ( user_id, notification_preference ), clinics (*), services (*)')
+    .select(
+      '*, patients ( user_id, notification_preference ), clinics (*), services (*), time_slots!inner ( date, start_time )'
+    )
     .in('status', ['booked', 'confirmed'])
-    .gte('appointment_date', todayStr)
-    .lte('appointment_date', tomorrowStr);
+    .gte('time_slots.date', todayStr)
+    .lte('time_slots.date', tomorrowStr);
 
   if (error) {
     console.warn('[Reminders] Failed to load appointments for reminder sweep:', error.message);
@@ -227,9 +252,8 @@ export async function sendDueAppointmentReminders(now: Date = new Date()): Promi
   const nowMs = now.getTime();
   for (const appt of (appointments ?? []) as any[]) {
     const patientUserId = appt?.patients?.user_id;
-    const apptStartMs = new Date(
-      `${appt?.appointment_date ?? appt?.time_slots?.date ?? ''}T${appt?.time_slots?.start_time ?? '00:00'}`
-    ).getTime();
+    const start = getSlotStart(appt);
+    const apptStartMs = start ? new Date(`${start.date}T${start.time}`).getTime() : NaN;
 
     if (!patientUserId) continue;
     if (Number.isNaN(apptStartMs) || apptStartMs <= nowMs) continue; // only upcoming appointments
