@@ -196,110 +196,110 @@ export const prescriptionsApi = {
    * issue a new one, so there is always a clean history.
    */
   create: async (
-    input: CreatePrescriptionInput,
-    actorRole: string | null
-  ): Promise<Prescription> => {
-    if (actorRole !== 'Doctor') {
-      throw new PrescriptionRuleError('Only doctors can issue prescriptions.');
-    }
-    if (!input.patient_id || !input.doctor_id || !input.appointment_id) {
-      throw new PrescriptionRuleError(
-        'A prescription must be linked to a patient, a doctor and an appointment.'
-      );
-    }
+  input: CreatePrescriptionInput,
+  actorRole: string | null
+): Promise<Prescription> => {
+  if (actorRole !== 'Doctor') {
+    throw new PrescriptionRuleError('Only doctors can issue prescriptions.');
+  }
+  if (!input.patient_id || !input.doctor_id || !input.appointment_id) {
+    throw new PrescriptionRuleError(
+      'A prescription must be linked to a patient, a doctor and an appointment.'
+    );
+  }
 
-    const medications = (input.medications || []).map((m) => ({
-      name: (m.name || '').trim(),
-      dosage: (m.dosage || '').trim(),
-      frequency: (m.frequency || '').trim(),
-      duration: (m.duration || '').trim(),
-      ...(m.instructions?.trim() ? { instructions: m.instructions.trim() } : {}),
-    }));
-    if (medications.length === 0) {
-      throw new PrescriptionRuleError('Add at least one medication.');
-    }
-    if (medications.some((m) => !m.name || !m.dosage || !m.frequency || !m.duration)) {
-      throw new PrescriptionRuleError(
-        'Every medication needs a name, dosage, frequency and duration.'
-      );
-    }
+  const medications = (input.medications || []).map((m) => ({
+    name: (m.name || '').trim(),
+    dosage: (m.dosage || '').trim(),
+    frequency: (m.frequency || '').trim(),
+    duration: (m.duration || '').trim(),
+    ...(m.instructions?.trim() ? { instructions: m.instructions.trim() } : {}),
+  }));
+  if (medications.length === 0) {
+    throw new PrescriptionRuleError('Add at least one medication.');
+  }
+  if (medications.some((m) => !m.name || !m.dosage || !m.frequency || !m.duration)) {
+    throw new PrescriptionRuleError(
+      'Every medication needs a name, dosage, frequency and duration.'
+    );
+  }
 
-    const validUntil = (input.valid_until || '').trim();
-    if (!isRealDate(validUntil)) {
-      throw new PrescriptionRuleError('Enter the valid-until date as YYYY-MM-DD.');
-    }
-    if (validUntil < toDateString(new Date())) {
-      throw new PrescriptionRuleError('The valid-until date cannot be in the past.');
-    }
+  const validUntil = (input.valid_until || '').trim();
+  if (!isRealDate(validUntil)) {
+    throw new PrescriptionRuleError('Enter the valid-until date as YYYY-MM-DD.');
+  }
+  if (validUntil < toDateString(new Date())) {
+    throw new PrescriptionRuleError('The valid-until date cannot be in the past.');
+  }
 
-    const { data: appt, error: apptErr } = await supabase
-      .from('appointments')
-      .select('id, patient_id, status')
-      .eq('id', input.appointment_id)
-      .maybeSingle();
-    if (apptErr) throw apptErr;
-    if (!appt) throw new PrescriptionRuleError('Appointment not found.');
-    if (appt.patient_id !== input.patient_id) {
-      throw new PrescriptionRuleError('This appointment belongs to a different patient.');
-    }
-    if (appt.status !== 'confirmed') {
-      throw new PrescriptionRuleError(
-        'A prescription can only be issued while the appointment is confirmed, before the visit is completed.'
-      );
-    }
+  const { data: appt, error: apptErr } = await supabase
+    .from('appointments')
+    .select('id, patient_id, status')
+    .eq('id', input.appointment_id)
+    .maybeSingle();
+  if (apptErr) throw apptErr;
+  if (!appt) throw new PrescriptionRuleError('Appointment not found.');
+  if (appt.patient_id !== input.patient_id) {
+    throw new PrescriptionRuleError('This appointment belongs to a different patient.');
+  }
+  if (appt.status !== 'confirmed') {
+    throw new PrescriptionRuleError(
+      'A prescription can only be issued while the appointment is confirmed, before the visit is completed.'
+    );
+  }
 
-    // Copy the prescriber's details onto the prescription. Patients cannot read the
-    // staff table, so without this their copy could not say who issued it.
-    const { data: doc } = await supabase
-      .from('staff')
-      .select('first_name, last_name, specialization, license_number')
-      .eq('id', input.doctor_id)
-      .maybeSingle();
-    const snapshot = doc
-      ? {
-          doctor_name: `${doc.first_name || ''} ${doc.last_name || ''}`.trim() || null,
-          doctor_specialization: doc.specialization || null,
-          doctor_license_number: doc.license_number || null,
-        }
-      : {};
+  // Copy the prescriber's details onto the prescription. Patients cannot read the
+  // staff table, so without this their copy could not say who issued it.
+  const { data: doc } = await supabase
+    .from('staff')
+    .select('first_name, last_name, specialization, license_number')
+    .eq('id', input.doctor_id)
+    .maybeSingle();
+  const snapshot = doc
+    ? {
+        doctor_name: `${doc.first_name || ''} ${doc.last_name || ''}`.trim() || null,
+        doctor_specialization: doc.specialization || null,
+        doctor_license_number: doc.license_number || null,
+      }
+    : {};
 
-    const row = {
-      patient_id: input.patient_id,
-      doctor_id: input.doctor_id,
-      appointment_id: input.appointment_id,
-      medical_record_id: input.medical_record_id ?? null,
-      medications,
-      diagnosis: input.diagnosis?.trim() || null,
-      notes: input.notes?.trim() || null,
-      valid_until: validUntil,
-      status: 'active',
-    };
+  const row = {
+    patient_id: input.patient_id,
+    doctor_id: input.doctor_id,
+    appointment_id: input.appointment_id,
+    medical_record_id: input.medical_record_id ?? null,
+    medications,
+    diagnosis: input.diagnosis?.trim() || null,
+    notes: input.notes?.trim() || null,
+    valid_until: validUntil,
+    status: 'active',
+  };
 
-    let result = await supabase
-      .from('prescriptions')
-      .insert({ ...row, ...snapshot })
-      .select()
-      .single();
+  const { data, error } = await supabase
+    .from('prescriptions')
+    .insert({ ...row, ...snapshot })
+    .select()
+    .single();
 
-    if (error) throw error;
-    const created = data as Prescription;
+  if (error) throw error;
+  const created = data as Prescription;
 
-    // Tell the patient (push + in-app). Never blocks or fails the create.
-    notifyPatient(created.patient_id, {
-      title: 'New prescription',
-      body: `Your doctor issued a prescription (${medications.length} medication${
-        medications.length > 1 ? 's' : ''
-      }), valid until ${validUntil}. Tap to view and download it.`,
-      data: {
-        type: 'prescription',
-        screen: 'Prescription',
-        prescriptionId: created.id,
-        appointmentId: created.appointment_id ?? undefined,
-      },
-    }).catch(() => {});
+  // Tell the patient (push + in-app). Never blocks or fails the create.
+  notifyPatient(created.patient_id, {
+    title: 'New prescription',
+    body: `Your doctor issued a prescription (${medications.length} medication${
+      medications.length > 1 ? 's' : ''
+    }), valid until ${validUntil}. Tap to view and download it.`,
+    data: {
+      type: 'prescription',
+      screen: 'Prescription',
+      prescriptionId: created.id,
+      appointmentId: created.appointment_id ?? undefined,
+    },
+  }).catch(() => {});
 
-    return created;
-  },
+  return created;
+},
 
   /** Doctor withdraws an active prescription (e.g. issued in error). */
   cancel: async (id: string, actorRole: string | null): Promise<void> => {
