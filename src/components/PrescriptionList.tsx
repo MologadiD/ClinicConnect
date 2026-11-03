@@ -9,7 +9,7 @@ import {
   prescriptionsApi,
 } from '../services/api/prescriptions';
 import { confirmAction, notify } from '../utils/dialogs';
-import { shareOrDownloadText } from '../utils/shareText';
+import { shareOrDownloadPdf } from '../utils/shareText';
 
 interface Props {
   /** Show prescriptions issued for one appointment... */
@@ -76,12 +76,15 @@ export default function PrescriptionList({
 
   const download = async (rx: Prescription) => {
     try {
-      await shareOrDownloadText(
-        `prescription-${rx.id.slice(0, 8)}.txt`,
-        prescriptionsApi.formatAsText(rx, name)
+      setBusyId(rx.id);
+      await shareOrDownloadPdf(
+        `prescription-${rx.id.slice(0, 8)}.pdf`,
+        prescriptionsApi.formatAsHtml(rx, name)
       );
     } catch (e: any) {
       notify('Could not download', e?.message || 'Please try again.');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -145,24 +148,28 @@ export default function PrescriptionList({
 
             {usable ? (
               <View style={styles.actions}>
-                <TouchableOpacity style={styles.action} onPress={() => download(rx)}>
-                  <Ionicons name="download-outline" size={16} color="#6B7C5C" />
-                  <Text style={styles.actionText}>Download</Text>
+                <TouchableOpacity
+                  style={styles.action}
+                  onPress={() => download(rx)}
+                  disabled={busyId === rx.id}
+                >
+                  {busyId === rx.id ? (
+                    <ActivityIndicator size="small" color="#6B7C5C" />
+                  ) : (
+                    <>
+                      <Ionicons name="download-outline" size={16} color="#6B7C5C" />
+                      <Text style={styles.actionText}>Download PDF</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
-                {canCancel && usable ? (
+                {canCancel ? (
                   <TouchableOpacity
                     style={styles.action}
                     onPress={() => cancel(rx)}
                     disabled={busyId === rx.id}
                   >
-                    {busyId === rx.id ? (
-                      <ActivityIndicator size="small" color="#C62828" />
-                    ) : (
-                      <>
-                        <Ionicons name="close-circle-outline" size={16} color="#C62828" />
-                        <Text style={[styles.actionText, { color: '#C62828' }]}>Cancel</Text>
-                      </>
-                    )}
+                    <Ionicons name="close-circle-outline" size={16} color="#C62828" />
+                    <Text style={[styles.actionText, { color: '#C62828' }]}>Cancel</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
