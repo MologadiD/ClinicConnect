@@ -1,5 +1,5 @@
 // src/screens/appointments/SelectTimeSlotScreen.tsx
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -44,7 +44,7 @@ function describeDate(dateStr: string) {
 
 function isSlotBookable(slot: SlotRow, now = new Date()): boolean {
   if (!slot.is_available) return false;
-  if ((slot.booked_count ?? 0) >= (slot.max_patients ?? 1)) return false;
+  if ((slot.booked_count ?? 0) >= 1) return false;
   return isSlotInFuture(slot.date, slot.start_time, now);
 }
 
@@ -133,6 +133,38 @@ export default function SelectTimeSlotScreen() {
       fetchSlots();
     }, [fetchSlots])
   );
+
+  // Live updates: when anyone books/cancels a slot for this clinic+service,
+  // refresh so taken slots grey out immediately.
+  const refetchRef = useRef(fetchSlots);
+  refetchRef.current = fetchSlots;
+  useEffect(() => {
+    const channel = supabase
+      .channel(`time_slots:${clinicId}:${serviceId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'time_slots', filter: `clinic_id=eq.${clinicId}` },
+        (payload: any) => {
+          const row = payload.new || payload.old;
+          if (row?.service_id && row.service_id !== serviceId) return;
+          setSlots((prev) =>
+            prev.map((s) => (payload.new && s.id === payload.new.id ? { ...s, ...payload.new } : s))
+          );
+          // If our selection just got taken, drop it and tell the user.
+          setSelectedSlotId((cur) => {
+            if (cur && payload.new?.id === cur && !isSlotBookable(payload.new)) {
+              Alert.alert('Just booked', 'Someone else took that time. Please pick another.');
+              return null;
+            }
+            return cur;
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [clinicId, serviceId]);
 
   const dates = useMemo(() => [...new Set(slots.map((s) => s.date))], [slots]);
 
@@ -240,13 +272,14 @@ export default function SelectTimeSlotScreen() {
                 const selected = selectedDate === date;
                 const userBooked = bookedDates.has(date);
                 const hasOpen = slots.some((s) => s.date === date && isSlotBookable(s));
+                const unavailable = userBooked || !hasOpen;
                 return (
                   <TouchableOpacity
                     key={date}
                     style={[
                       styles.dateChip,
                       selected && styles.dateChipSelected,
-                      userBooked && !selected && styles.dateChipUserBooked,
+                      unavailable && !selected && styles.dateChipUserBooked,
                     ]}
                     onPress={() => selectDate(date)}
                     activeOpacity={0.8}
@@ -258,7 +291,7 @@ export default function SelectTimeSlotScreen() {
                       style={[
                         styles.dateWeekday,
                         selected && styles.dateTextSelected,
-                        userBooked && !selected && styles.dateTextMuted,
+                        unavailable && !selected && styles.dateTextMuted,
                       ]}
                     >
                       {weekday}
@@ -267,7 +300,7 @@ export default function SelectTimeSlotScreen() {
                       style={[
                         styles.dateDay,
                         selected && styles.dateTextSelected,
-                        userBooked && !selected && styles.dateTextMuted,
+                        unavailable && !selected && styles.dateTextMuted,
                       ]}
                     >
                       {day}
@@ -276,7 +309,7 @@ export default function SelectTimeSlotScreen() {
                       style={[
                         styles.dateMonth,
                         selected && styles.dateTextSelected,
-                        userBooked && !selected && styles.dateTextMuted,
+                        unavailable && !selected && styles.dateTextMuted,
                       ]}
                     >
                       {month}
@@ -310,8 +343,6 @@ export default function SelectTimeSlotScreen() {
               {slotsForDate.map((slot) => {
                 const bookable = isSlotBookable(slot) && !userHasBookingOnSelectedDate;
                 const selected = selectedSlotId === slot.id;
-                const max = slot.max_patients ?? 1;
-                const remaining = max - (slot.booked_count ?? 0);
 
                 return (
                   <TouchableOpacity
@@ -339,10 +370,6 @@ export default function SelectTimeSlotScreen() {
                     {!bookable ? (
                       <Text style={styles.spotsTextDisabled}>
                         {userHasBookingOnSelectedDate ? '—' : 'Booked'}
-                      </Text>
-                    ) : remaining > 0 && remaining < max ? (
-                      <Text style={[styles.spotsText, selected && { color: '#E8F0E0' }]}>
-                        {remaining} left
                       </Text>
                     ) : null}
                   </TouchableOpacity>
