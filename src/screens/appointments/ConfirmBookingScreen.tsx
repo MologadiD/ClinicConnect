@@ -18,7 +18,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase/client';
-import { markSlotBooked } from '../../services/slots';
+import { ensureNextDaySlot } from '../../services/slots';
 import { RootStackParamList } from '../../navigation/types';
 import { sendPatientAppointmentReminder } from '../../services/notifications/appointmentReminders';
 
@@ -52,13 +52,25 @@ export default function ConfirmBookingScreen() {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const handleConfirm = async () => {
+  const handleConfirm = () => {
+    Alert.alert(
+      'Confirm appointment?',
+      `${serviceName || 'Appointment'} at ${clinicName || 'the clinic'}\n${formatDate(date)}, ${startTime?.slice(0, 5)}`,
+      [
+        { text: 'Review', style: 'cancel' },
+        { text: 'Yes, book it', onPress: submitBooking },
+      ]
+    );
+  };
+
+  const submitBooking = async () => {
     if (!user) {
       Alert.alert('Error', 'You must be logged in to book an appointment');
       return;
     }
 
     setSubmitting(true);
+    let slotTaken = false;
     try {
       let patientId = profile?.id;
       if (!patientId) {
@@ -73,85 +85,32 @@ export default function ConfirmBookingScreen() {
         patientId = patientData.id;
       }
 
-      // One appointment per patient per day
-      const { data: sameDayAppts } = await supabase
-        .from('appointments')
-        .select('id, time_slots!inner ( date )')
-        .eq('patient_id', patientId)
-        .in('status', ['booked', 'confirmed'])
-        .eq('time_slots.date', date);
+      // Atomic server-side booking: locks the slot, checks capacity and the
+      // one-per-day rule, inserts the appointment and updates the slot.
+      const { data: result, error: rpcError } = await supabase.rpc('book_appointment', {
+        p_patient_id: patientId,
+        p_clinic_id: clinicId,
+        p_service_id: serviceId,
+        p_time_slot_id: timeSlotId,
+        p_reason: reason.trim() || serviceName || null,
+      });
 
-      if (sameDayAppts && sameDayAppts.length > 0) {
-        throw new Error(
-          'You already have an appointment on this day. Only one booking per day is allowed.'
-        );
+      if (rpcError) throw rpcError;
+      if (!result?.ok) {
+        slotTaken = result?.code === 'slot_taken' || result?.code === 'slot_missing';
+        throw new Error(result?.message || 'Could not complete your booking.');
       }
 
-      // Refuse if this slot is already full / unavailable for the day
-      const { data: slotCheck, error: slotCheckErr } = await supabase
-        .from('time_slots')
-        .select('id, is_available, booked_count, max_patients')
-        .eq('id', timeSlotId)
-        .maybeSingle();
+      // Keep the clinic's daily schedule rolling (best effort)
+      await ensureNextDaySlot(timeSlotId).catch(() => {});
 
-      if (slotCheckErr) throw slotCheckErr;
-      if (
-        !slotCheck ||
-        !slotCheck.is_available ||
-        (slotCheck.booked_count ?? 0) >= (slotCheck.max_patients ?? 1)
-      ) {
-        throw new Error(
-          'This time slot is no longer available for the day. Please go back and choose another time.'
-        );
-      }
-
-      // Also block if another active appointment already sits on this slot
-      const { count: existingAppts } = await supabase
-        .from('appointments')
-        .select('id', { count: 'exact', head: true })
-        .eq('time_slot_id', timeSlotId)
-        .in('status', ['booked', 'confirmed']);
-
-      if ((existingAppts ?? 0) >= (slotCheck.max_patients ?? 1)) {
-        // Keep DB consistent
-        await supabase
-          .from('time_slots')
-          .update({
-            is_available: false,
-            booked_count: existingAppts ?? 1,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', timeSlotId);
-        throw new Error(
-          'This time slot was just booked by someone else. Please choose another time.'
-        );
-      }
-
-      const { data, error: apptError } = await supabase
-        .from('appointments')
-        .insert({
-          patient_id: patientId,
-          clinic_id: clinicId,
-          service_id: serviceId,
-          time_slot_id: timeSlotId,
-          reason_for_visit: reason.trim() || serviceName || 'General consultation',
-          status: 'booked',
-        })
-        .select()
-        .single();
-
-      if (apptError) throw apptError;
-
-      // Mark slot unavailable for the day (and roll same time to next day)
-      await markSlotBooked(timeSlotId);
-
-            // Fire the appointment reminder(s) for the newly created appointment,
+      // Fire the appointment reminder(s) for the newly created appointment,
       // honouring the patient's chosen reminder timing.
       try {
         const { data: createdAppointment, error: fetchErr } = await supabase
           .from('appointments')
           .select('*, clinics(*), services(*), time_slots(*)')
-          .eq('id', data.id)
+          .eq('id', result.appointment_id)
           .single();
 
         if (!fetchErr && createdAppointment) {
@@ -175,7 +134,11 @@ export default function ConfirmBookingScreen() {
       });
     } catch (err: any) {
       console.error('Booking error:', err);
-      Alert.alert('Booking Failed', err.message || 'Could not complete your booking. Please try again.');
+      Alert.alert(
+        slotTaken ? 'Time no longer available' : 'Booking Failed',
+        err.message || 'Could not complete your booking. Please try again.',
+        slotTaken ? [{ text: 'Choose another time', onPress: () => navigation.goBack() }] : undefined
+      );
     } finally {
       setSubmitting(false);
     }

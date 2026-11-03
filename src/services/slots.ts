@@ -101,7 +101,7 @@ export async function ensureNextDaySlot(slotId: string): Promise<void> {
     start_time: start,
     end_time: end,
     is_available: true,
-    max_patients: slot.max_patients ?? 1,
+    max_patients: 1,
     booked_count: 0,
   });
 }
@@ -158,7 +158,7 @@ export async function rollPastSlotsForward(
         start_time: start,
         end_time: end,
         is_available: true,
-        max_patients: slot.max_patients ?? 1,
+        max_patients: 1,
         booked_count: 0,
       });
     }
@@ -189,7 +189,7 @@ export async function ensureHorizonSlots(
     if (!start || uniqueStarts.has(start)) continue;
     uniqueStarts.set(start, {
       end: t.end_time?.slice(0, 5) || endTimeFromStart(start),
-      max: t.max_patients ?? 1,
+      max: 1,
     });
   }
 
@@ -230,7 +230,7 @@ export async function ensureHorizonSlots(
 export function filterBookableSlots(slots: SlotRow[], now = new Date()): SlotRow[] {
   return slots.filter((s) => {
     if (!s.is_available) return false;
-    if ((s.booked_count ?? 0) >= (s.max_patients ?? 1)) return false;
+    if ((s.booked_count ?? 0) >= 1) return false;
     return isSlotInFuture(s.date, s.start_time, now);
   });
 }
@@ -238,7 +238,7 @@ export function filterBookableSlots(slots: SlotRow[], now = new Date()): SlotRow
 /**
  * Mark a time slot as booked for that day.
  * - Increments booked_count
- * - Sets is_available = false once capacity is reached (default max_patients = 1)
+ * - Sets is_available = false once capacity is reached (every slot holds exactly one patient)
  * - Rolls the same wall-clock time forward to the next day so the schedule stays open
  */
 export async function markSlotBooked(slotId: string): Promise<void> {
@@ -253,7 +253,7 @@ export async function markSlotBooked(slotId: string): Promise<void> {
     return;
   }
 
-  const max = slot.max_patients ?? 1;
+  const max = 1; // every slot holds exactly one patient
   const newCount = (slot.booked_count ?? 0) + 1;
   // Once full (normal case max=1), the slot is unavailable for the rest of the day
   const available = newCount < max;
